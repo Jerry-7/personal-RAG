@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Runtime Data
+backend/data/uploads/*
+backend/data/chroma/*
+backend/data/transcripts/*
+backend/data/faiss/*
+backend/data/app.db
+backend/data/app.db-*
+backend/data/app.db-wal
+backend/data/app.db-shm
+!backend/data/uploads/.gitkeep
+!backend/data/chroma/.gitkeep
+!backend/data/transcripts/.gitkeep
+
+# Environment
+.env
+.env.local
+
+# Node
+node_modules/
+frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

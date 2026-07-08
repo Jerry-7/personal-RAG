@@ -1,0 +1,42 @@
+# Personal RAG Backend Dependencies
+# Python 3.13+
+
+# Web Framework
+fastapi==0.115.*
+uvicorn[standard]==0.34.*
+python-multipart==0.0.*
+sse-starlette==2.2.*
+
+# Database & Vector Store
+sqlalchemy==2.0.*
+faiss-cpu==1.14.*
+numpy==2.5.*
+
+# Document Parsing
+pymupdf4llm==0.0.*
+python-docx==1.1.*
+python-magic-bin==0.4.*
+Pillow==11.1.*
+
+# OCR
+# Tesseract: 需要单独安装 Windows 二进制 (https://github.com/UB-Mannheim/tesseract/wiki)
+# pytesseract
+# PaddleOCR (更好的中文识别):
+# paddlepaddle
+# paddleocr
+
+# Transcription
+faster-whisper==1.2.*
+
+# LLM Providers
+ollama==0.4.*
+openai==1.68.*
+anthropic==0.45.*
+
+# Utilities
+pydantic==2.10.*
+pydantic-settings==2.7.*
+python-dotenv==1.0.*
+httpx==0.28.*
+aiofiles==24.1.*
+uuid7==0.1.*

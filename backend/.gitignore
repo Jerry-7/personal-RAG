@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+.venv/
+venv/
+
+# Runtime Data
+data/uploads/*
+data/chroma/*
+data/transcripts/*
+data/app.db
+!data/uploads/.gitkeep
+!data/chroma/.gitkeep
+!data/transcripts/.gitkeep
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
