@@ -200,7 +200,8 @@ class MediaParser(BaseParser):
         try:
             result = subprocess.run(
                 [
-                    "ffmpeg", "-i", video_path,
+                    "ffmpeg", "-hide_banner", "-loglevel", "error",
+                    "-i", video_path,
                     "-vn",               # 不要视频流
                     "-acodec", "pcm_s16le",  # PCM 16-bit
                     "-ar", "16000",       # 16kHz 采样率

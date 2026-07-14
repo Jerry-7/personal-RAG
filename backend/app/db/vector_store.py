@@ -127,6 +127,7 @@ class VectorStore:
         Raises:
             ValueError: 输入列表长度不一致
         """
+        # len()能够自动去重
         if len({len(chunk_ids), len(texts), len(embeddings), len(metadatas)}) != 1:
             raise ValueError("所有输入列表必须具有相同长度")
 
@@ -141,7 +142,7 @@ class VectorStore:
         faiss_ids = []
         for chunk_id in chunk_ids:
             if chunk_id in self._reverse_id_map:
-                # 已存在，使用已有 ID（更新场景）
+                # 已存在，使用已有索引（根据chunk_i）（更新场景）
                 faiss_ids.append(self._reverse_id_map[chunk_id])
             else:
                 fid = self._next_id
@@ -182,6 +183,7 @@ class VectorStore:
                 "distances": [[dist1, dist2, ...]]
             }
         """
+        # 当前索引中已经存储的向量总数
         if self._index.ntotal == 0:
             return {
                 "ids": [[]],
@@ -194,6 +196,7 @@ class VectorStore:
         vector = self._normalize(vector)
 
         k = min(n_results, self._index.ntotal)
+        # distances, indices 都是2维数组，所以下面只取第一个元素
         distances, indices = self._index.search(vector, k)
 
         # 将 FAISS 内部 ID 转换回 chunk_id

@@ -197,11 +197,12 @@ class TextChunker:
             for split in splits:
                 # 用分隔符连接（非空分隔符时）
                 candidate = current_chunk + (sep if current_chunk else "") + split
-
+                # 若没超chunk_size 继续拼接
                 if len(candidate) <= self.chunk_size:
                     current_chunk = candidate
+                # 超过chunk_size，先flush上一次拼接的结果（即current_chunk）
                 else:
-                    # 当前累积块已满
+                    # 当前累积块已满, 先append掉
                     if current_chunk:
                         chunks.append(current_chunk)
 
