@@ -3,9 +3,19 @@
  *
  * 使用 fetch + ReadableStream 消费 SSE 流，
  * 支持逐 token 渲染和引用标记。
+ * Agent 模式附加 tool_call/tool_result 事件。
  */
 
 import type { SSEDoneEvent } from '../types/chat';
+
+/** Agent 工具调用步骤（前端展示用） */
+export interface AgentStep {
+  type: 'tool_call' | 'tool_result' | 'max_iterations';
+  name?: string;
+  arguments?: Record<string, unknown>;
+  result?: string;
+  message?: string;
+}
 
 /** SSE 流事件回调 */
 export interface ChatStreamCallbacks {
@@ -13,6 +23,12 @@ export interface ChatStreamCallbacks {
   onCitation: (index: number) => void;
   onDone: (data: SSEDoneEvent) => void;
   onError: (error: string) => void;
+  /** Agent 模式：工具调用开始 */
+  onToolCall?: (name: string, args: Record<string, unknown>) => void;
+  /** Agent 模式：工具调用结果 */
+  onToolResult?: (name: string, result: string) => void;
+  /** Agent 模式：达到最大迭代 */
+  onMaxIterations?: (message: string) => void;
 }
 
 /**
@@ -78,6 +94,16 @@ export function streamChatQuery(
                   break;
                 case 'error':
                   callbacks.onError(data.message || '未知错误');
+                  break;
+                // ── Agent 模式事件 ──────────────────────────
+                case 'tool_call':
+                  callbacks.onToolCall?.(data.name, data.arguments);
+                  break;
+                case 'tool_result':
+                  callbacks.onToolResult?.(data.name, data.result);
+                  break;
+                case 'max_iterations':
+                  callbacks.onMaxIterations?.(data.message || '达到最大搜索次数');
                   break;
               }
             } catch {

@@ -14,8 +14,10 @@ from anthropic import AsyncAnthropic
 
 from app.config import settings
 from app.providers.base import (
+    AgentResponse,
     LLMProvider,
     LLMResponse,
+    ToolCall,
 )
 
 
@@ -116,3 +118,70 @@ class AnthropicLLMProvider(LLMProvider):
         ) as stream:
             async for text in stream.text_stream:
                 yield text
+
+    async def chat_with_tools(
+        self,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, Any]],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> AgentResponse:
+        """
+        支持 tool calling 的聊天生成。
+
+        使用 Anthropic 原生 tool_use API。
+
+        Args:
+            messages: 对话消息列表
+            tools: OpenAI 格式的工具定义列表
+            model: 模型名称
+            temperature: 生成温度
+            max_tokens: 最大 token 数
+
+        Returns:
+            AgentResponse: 包含文本内容或工具调用列表
+        """
+        # 提取 system 消息（Anthropic 单独处理）
+        system_msg = ""
+        chat_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_msg += msg["content"] + "\n"
+            else:
+                chat_messages.append(msg)
+
+        # 转换 tools 格式: OpenAI → Anthropic
+        anthropic_tools = []
+        for t in tools:
+            func = t.get("function", t)
+            anthropic_tools.append({
+                "name": func["name"],
+                "description": func.get("description", ""),
+                "input_schema": func.get("parameters", {"type": "object", "properties": {}}),
+            })
+
+        response = await self._client.messages.create(
+            model=model or self._default_model,
+            system=system_msg.strip() or None,
+            messages=chat_messages,  # type: ignore
+            tools=anthropic_tools,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        tool_calls = []
+        text_parts = []
+        for block in response.content:
+            if block.type == "tool_use":
+                tool_calls.append(ToolCall(
+                    id=block.id,
+                    name=block.name,
+                    arguments=block.input,
+                ))
+            elif block.type == "text":
+                text_parts.append(block.text)
+
+        if tool_calls:
+            return AgentResponse(tool_calls=tool_calls)
+        return AgentResponse(content="".join(text_parts))

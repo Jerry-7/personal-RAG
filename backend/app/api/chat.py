@@ -4,10 +4,15 @@
 
 提供基于 SSE 的流式 RAG 问答接口，整合检索、生成和引用解析。
 包含查询、对话历史管理和取消生成功能。
+
+支持两种模式：
+- Agent 模式 (agent_enabled=True): LLM 自主决策检索策略，支持多轮工具调用
+- 经典 RAG 模式 (agent_enabled=False): 固定检索→生成流水线
 """
 
 import asyncio
 import json
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -22,8 +27,8 @@ from app.db.database import get_db
 from app.db.models import Conversation, Message
 from app.services.retriever import retriever
 from app.services.generator import generator
-from app.services.citation import CitationParser
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # 取消生成的事件标志 (key: conversation_id)
@@ -46,11 +51,16 @@ async def chat_query(
         - conversation_id: str|null  已有对话 ID，None 则创建新对话
         - top_k: int  检索分块数 (默认 4)
 
-    SSE events:
+    SSE events (经典模式):
         - event: token    data: {"text": "..."}
         - event: citation data: {"index": N}
         - event: done     data: {"citations": [...], "conversation_id": "...", "message_id": "..."}
         - event: error    data: {"message": "..."}
+
+    SSE events (Agent 模式，额外):
+        - event: tool_call   data: {"name": "...", "arguments": {...}}
+        - event: tool_result data: {"name": "...", "result": "..."}
+        - event: max_iterations data: {"message": "..."}
     """
     # 解析请求体
     body: dict = {}
@@ -73,7 +83,7 @@ async def chat_query(
         conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
     else:
         conv = None
-
+    # 创建新对话
     if not conv:
         conv = Conversation(
             id=str(uuid.uuid4()),
@@ -97,58 +107,202 @@ async def chat_query(
     db.add(user_msg)
     db.commit()
 
-    # ── SSE 事件生成器 ──────────────────────────────────────
-    async def event_generator():
-        retrieved_chunks = []
-        used_indices = []
+    # ── 根据配置选择模式 ──────────────────────────────────────
+    if settings.agent_enabled:
+        stream = _agent_event_generator(question, conversation_id, db, conv)
+    else:
+        stream = _classic_event_generator(question, top_k, conversation_id, db, conv)
 
-        try:
-            # Step 1: 检索
-            yield {"event": "token", "data": json.dumps({"text": ""})}  # 初始化连接
-            retrieved_chunks = await retriever.retrieve(question, db, top_k=top_k)
+    return EventSourceResponse(stream)
 
-            if not retrieved_chunks:
-                yield {
-                    "event": "token",
-                    "data": json.dumps({"text": "未在已上传文档中找到相关信息。请尝试上传相关文档后重试。"}),
-                }
-                yield {
-                    "event": "done",
-                    "data": json.dumps({
-                        "citations": [],
-                        "conversation_id": conversation_id,
-                        "message_id": "",
-                    }),
-                }
-                return
 
-            # Step 2 & 3: 流式生成 + 引用解析
-            parser = CitationParser()
-            full_content = ""
+async def _classic_event_generator(
+    question: str,
+    top_k: int,
+    conversation_id: str,
+    db: Session,
+    conv: Conversation,
+):
+    """
+    经典 RAG 模式事件生成器。
 
-            async for event in generator.generate_stream(
-                question=question,
-                retrieved_chunks=retrieved_chunks,
-            ):
-                # 检查取消标志
-                if conversation_id and conversation_id in _cancellation_flags:
-                    if _cancellation_flags[conversation_id].is_set():
-                        full_content += " [生成已取消]"
-                        break
+    固定流水线：embed → 检索 → 拼 prompt → 生成。
+    保持与 v0.1 版本完全兼容。
+    """
+    retrieved_chunks = []
+    used_indices = []
 
-                if event["type"] == "token":
-                    full_content += event["text"]
-                    yield {"event": "token", "data": json.dumps({"text": event["text"]})}
-                elif event["type"] == "citation":
-                    index = event["index"]
-                    if index not in used_indices:
-                        used_indices.append(index)
-                    yield {"event": "citation", "data": json.dumps({"index": index})}
+    try:
+        # Step 1: 检索
+        yield {"event": "token", "data": json.dumps({"text": ""})}  # 初始化连接
+        retrieved_chunks = await retriever.retrieve(question, db, top_k=top_k)
 
-            # Step 4: 构建引用元数据
-            citations = generator.get_citations_for_chunks(retrieved_chunks, used_indices)
+        if not retrieved_chunks:
+            yield {
+                "event": "token",
+                "data": json.dumps({"text": "未在已上传文档中找到相关信息。请尝试上传相关文档后重试。"}),
+            }
+            yield {
+                "event": "done",
+                "data": json.dumps({
+                    "citations": [],
+                    "conversation_id": conversation_id,
+                    "message_id": "",
+                }),
+            }
+            return
 
-            # Step 5: 保存 AI 消息
+        # Step 2 & 3: 流式生成 + 引用解析
+        full_content = ""
+
+        async for event in generator.generate_stream(
+            question=question,
+            retrieved_chunks=retrieved_chunks,
+        ):
+            # 检查取消标志
+            if conversation_id and conversation_id in _cancellation_flags:
+                if _cancellation_flags[conversation_id].is_set():
+                    full_content += " [生成已取消]"
+                    break
+
+            if event["type"] == "token":
+                full_content += event["text"]
+                yield {"event": "token", "data": json.dumps({"text": event["text"]})}
+            elif event["type"] == "citation":
+                index = event["index"]
+                if index not in used_indices:
+                    used_indices.append(index)
+                yield {"event": "citation", "data": json.dumps({"index": index})}
+
+        # Step 4: 构建引用元数据
+        citations = generator.get_citations_for_chunks(retrieved_chunks, used_indices)
+
+        # Step 5: 保存 AI 消息
+        ai_msg = Message(
+            id=str(uuid.uuid4()),
+            conversation_id=conversation_id,
+            role="assistant",
+            content=full_content,
+            citations_json=json.dumps(citations, ensure_ascii=False),
+            token_count=len(full_content) // 4,
+        )
+        db.add(ai_msg)
+        conv.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+        # Step 6: 发送完成事件
+        yield {
+            "event": "done",
+            "data": json.dumps({
+                "citations": citations,
+                "conversation_id": conversation_id,
+                "message_id": ai_msg.id,
+            }, ensure_ascii=False),
+        }
+
+    except Exception as e:
+        logger.exception("Classic RAG generation failed")
+        yield {
+            "event": "error",
+            "data": json.dumps({"message": f"生成失败: {str(e)}"}),
+        }
+    finally:
+        # 清理取消标志
+        if conversation_id and conversation_id in _cancellation_flags:
+            del _cancellation_flags[conversation_id]
+
+
+async def _agent_event_generator(
+    question: str,
+    conversation_id: str,
+    db: Session,
+    conv: Conversation,
+):
+    """
+    Agent 模式事件生成器。
+
+    LLM 自主决策：何时检索、检索什么、是否需要多轮检索。
+    通过 tool_call/tool_result 事件向前端展示思考过程。
+    """
+    from app.agent.loop import AgentLoop
+    from app.agent.builtin_tools import set_db_context
+    from app.services.generator import generator as gen_service
+
+    # 设置当前请求的数据库上下文（供内置工具使用）
+    set_db_context(db)
+
+    # 创建 LLM provider
+    llm_provider = await gen_service._get_provider()
+
+    # 创建 Agent 循环
+    agent = AgentLoop(provider=llm_provider)
+
+    used_indices: list[int] = []
+    full_content = ""
+
+    try:
+        # 初始化连接
+        yield {"event": "token", "data": json.dumps({"text": ""})}
+
+        # 运行 Agent 循环
+        async for event in agent.run(
+            question=question,
+            conversation_id=conversation_id,
+        ):
+            evt_type = event.get("event", "")
+            data = event.get("data", "")
+
+            if evt_type == "token":
+                # 文本 token（来自最终回答的流式输出）
+                # AgentLoop 的 token data 是裸字符串，包装为前端期望的格式
+                token_text = data if isinstance(data, str) else data.get("text", "")
+                full_content += token_text
+                yield {"event": "token", "data": json.dumps({"text": token_text})}
+                continue
+
+            elif evt_type == "citation":
+                # 引用标记 [N]
+                idx = data.get("index", 0) if isinstance(data, dict) else data
+                if isinstance(idx, int) and idx not in used_indices:
+                    used_indices.append(idx)
+
+            elif evt_type == "tool_call":
+                # Agent 调用工具
+                logger.debug("Agent tool call: %s", data.get("name", "?"))
+
+            elif evt_type == "tool_result":
+                # 工具执行结果
+                logger.debug("Agent tool result: %s (%d chars)",
+                           data.get("name", "?"),
+                           len(data.get("result", "")))
+
+            elif evt_type == "error":
+                # 错误事件直接转发
+                yield {"event": "error", "data": json.dumps(data)}
+                # 错误发生后仍尝试保存已有内容
+
+            elif evt_type == "max_iterations":
+                logger.warning("Agent reached max iterations for conv %s", conversation_id)
+
+            else:
+                logger.debug("Unknown agent event: %s", evt_type)
+
+            # 转发事件给前端
+            yield {
+                "event": evt_type,
+                "data": json.dumps(data, ensure_ascii=False)
+                if isinstance(data, (dict, list)) else data,
+            }
+
+        # ── 保存 AI 消息 ──────────────────────────────────────
+        if full_content.strip():
+            # Agent 模式下引用元数据为简化版（多轮检索难以精确追踪来源）
+            citations = [
+                {"index": idx, "document_id": "", "chunk_id": "",
+                 "snippet": f"来源 [{idx}]", "filename": "", "source_type": "text"}
+                for idx in sorted(used_indices)
+            ]
+
             ai_msg = Message(
                 id=str(uuid.uuid4()),
                 conversation_id=conversation_id,
@@ -161,7 +315,7 @@ async def chat_query(
             conv.updated_at = datetime.now(timezone.utc)
             db.commit()
 
-            # Step 6: 发送完成事件
+            # 发送完成事件
             yield {
                 "event": "done",
                 "data": json.dumps({
@@ -170,18 +324,27 @@ async def chat_query(
                     "message_id": ai_msg.id,
                 }, ensure_ascii=False),
             }
-
-        except Exception as e:
+        else:
+            # 没有生成内容
             yield {
-                "event": "error",
-                "data": json.dumps({"message": f"生成失败: {str(e)}"}),
+                "event": "done",
+                "data": json.dumps({
+                    "citations": [],
+                    "conversation_id": conversation_id,
+                    "message_id": "",
+                }),
             }
-        finally:
-            # 清理取消标志
-            if conversation_id and conversation_id in _cancellation_flags:
-                del _cancellation_flags[conversation_id]
 
-    return EventSourceResponse(event_generator())
+    except Exception as e:
+        logger.exception("Agent generation failed")
+        yield {
+            "event": "error",
+            "data": json.dumps({"message": f"Agent 生成失败: {str(e)}"}),
+        }
+    finally:
+        # 清理取消标志
+        if conversation_id and conversation_id in _cancellation_flags:
+            del _cancellation_flags[conversation_id]
 
 
 @router.post("/chat/cancel")
