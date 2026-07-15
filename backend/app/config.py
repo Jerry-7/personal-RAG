@@ -69,6 +69,10 @@ class Settings(BaseSettings):
         "jpg", "jpeg", "png", "bmp", "tiff",
     ]
 
+    # ── Agent 配置 ────────────────────────────────────────────
+    agent_enabled: bool = True
+    agent_max_iterations: int = 5
+
 
 # 单例实例
 settings = Settings()

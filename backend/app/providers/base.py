@@ -30,6 +30,37 @@ class LLMResponse:
     model: str = ""
 
 
+@dataclass
+class ToolCall:
+    """
+    LLM 返回的工具调用请求。
+
+    Attributes:
+        id: 工具调用唯一标识（用于匹配结果）
+        name: 工具名称
+        arguments: 工具参数，已解析为 dict
+    """
+    id: str = ""
+    name: str = ""
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AgentResponse:
+    """
+    Agent 模式下 LLM 的单轮响应。
+
+    可能是纯文本（最终回答或思考过程），也可能是工具调用请求。
+    两者不会同时非空：有 tool_calls 时 content 为空，反之亦然。
+
+    Attributes:
+        content: 纯文本输出（最终回答或思考）
+        tool_calls: 工具调用列表（LLM 决定调用工具时）
+    """
+    content: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
+
+
 class LLMProvider(ABC):
     """
     LLM Provider 抽象基类。
@@ -85,6 +116,71 @@ class LLMProvider(ABC):
             str: 每次 yield 一个文本片段（可能是单个 token 或短词组）
         """
         ...
+
+    async def chat_with_tools(
+        self,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, Any]],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> AgentResponse:
+        """
+        支持 tool calling 的聊天生成（Agent 模式）。
+
+        默认实现：尝试调用 chat() 并解析 tool_calls。
+        子类可覆盖以使用原生 tool calling API。
+
+        Args:
+            messages: 对话消息列表
+            tools: OpenAI 格式的工具定义列表
+            model: 模型名称，None 则使用默认模型
+            temperature: 生成温度
+            max_tokens: 最大生成 token 数
+
+        Returns:
+            AgentResponse: 包含文本内容或工具调用列表
+        """
+        # 默认实现：构建带有 tool 指令的 system prompt
+        # 子类（Ollama/OpenAI/Anthropic）应覆盖此方法使用原生 tool calling
+        tool_descriptions = "\n".join(
+            f"- {t['function']['name']}: {t['function']['description']}"
+            for t in tools
+        )
+        system_msg = (
+            "You have access to the following tools:\n"
+            f"{tool_descriptions}\n\n"
+            "To use a tool, respond with JSON in this exact format:\n"
+            '{"tool_calls": [{"name": "tool_name", "arguments": {...}}]}\n\n'
+            "After receiving tool results, continue answering naturally."
+        )
+        messages = [{"role": "system", "content": system_msg}] + messages
+
+        response = await self.chat(messages, model, temperature, max_tokens)
+        content = response.content
+
+        # 尝试解析 JSON tool_calls
+        import json as _json
+        try:
+            # 提取可能的 JSON 块
+            import re as _re
+            match = _re.search(r'\{[^{}]*"tool_calls"[^{}]*\}', content, _re.DOTALL)
+            if match:
+                data = _json.loads(match.group(0))
+                calls = data.get("tool_calls", [])
+                if calls:
+                    return AgentResponse(tool_calls=[
+                        ToolCall(
+                            id=c.get("id", f"call_{i}"),
+                            name=c["name"],
+                            arguments=c.get("arguments", {}),
+                        )
+                        for i, c in enumerate(calls)
+                    ])
+        except (_json.JSONDecodeError, KeyError, TypeError):
+            pass
+
+        return AgentResponse(content=content)
 
 
 class EmbeddingProvider(ABC):

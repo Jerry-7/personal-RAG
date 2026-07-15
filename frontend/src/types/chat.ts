@@ -26,7 +26,15 @@ export interface MessageItem {
 }
 
 /** SSE 流事件类型 */
-export type SSEEventType = 'token' | 'citation' | 'done' | 'error';
+export type SSEEventType =
+  | 'token'
+  | 'citation'
+  | 'done'
+  | 'error'
+  | 'thinking'
+  | 'tool_call'
+  | 'tool_result'
+  | 'max_iterations';
 
 /** SSE Token 事件 */
 export interface SSETokenEvent {
@@ -43,4 +51,26 @@ export interface SSEDoneEvent {
   citations: CitationData[];
   conversation_id: string;
   message_id: string;
+}
+
+/** SSE Tool Call 事件 (Agent 模式) */
+export interface SSEToolCallEvent {
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+/** SSE Tool Result 事件 (Agent 模式) */
+export interface SSEToolResultEvent {
+  name: string;
+  result: string;
+}
+
+/** Agent 思考步骤（前端展示用） */
+export interface AgentStep {
+  type: 'tool_call' | 'tool_result' | 'max_iterations';
+  name?: string;
+  arguments?: Record<string, unknown>;
+  result?: string;
+  message?: string;
+  timestamp: number;
 }

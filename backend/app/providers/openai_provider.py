@@ -6,6 +6,7 @@ OpenAI Provider 模块
 支持 GPT-4o、GPT-4o-mini 等模型。
 """
 
+import json as _json
 from collections.abc import AsyncGenerator
 from typing import Any, Optional
 
@@ -13,9 +14,11 @@ from openai import AsyncOpenAI
 
 from app.config import settings
 from app.providers.base import (
+    AgentResponse,
     EmbeddingProvider,
     LLMProvider,
     LLMResponse,
+    ToolCall,
 )
 
 
@@ -82,6 +85,57 @@ class OpenAILLMProvider(LLMProvider):
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
+
+    async def chat_with_tools(
+        self,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, Any]],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> AgentResponse:
+        """
+        支持 tool calling 的聊天生成。
+
+        使用 OpenAI 原生 function calling API。
+
+        Args:
+            messages: 对话消息列表
+            tools: OpenAI 格式的工具定义列表
+            model: 模型名称
+            temperature: 生成温度
+            max_tokens: 最大 token 数
+
+        Returns:
+            AgentResponse: 包含文本内容或工具调用列表
+        """
+        # 转换 tools 格式: OpenAI 需要 type: "function" 包装
+        openai_tools = [
+            {"type": "function", "function": t["function"]} if "function" in t else t
+            for t in tools
+        ]
+
+        response = await self._client.chat.completions.create(
+            model=model or self._default_model,
+            messages=messages,  # type: ignore
+            tools=openai_tools,  # type: ignore
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        choice = response.choices[0]
+        msg = choice.message
+
+        if msg.tool_calls:
+            return AgentResponse(tool_calls=[
+                ToolCall(
+                    id=tc.id,
+                    name=tc.function.name,
+                    arguments=_json.loads(tc.function.arguments),
+                )
+                for tc in msg.tool_calls
+            ])
+
+        return AgentResponse(content=msg.content or "")
 
 
 class OpenAIEmbeddingProvider(EmbeddingProvider):
