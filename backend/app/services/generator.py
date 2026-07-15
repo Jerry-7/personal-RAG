@@ -137,7 +137,7 @@ class Generator:
             dict: SSE 事件 {"type": "token", "text": "..."} 或
                  {"type": "citation", "index": N}
         """
-        # Step 1: 构建 context
+        # Step 1: 构建 context -- source label + chunks
         context = self.build_context(retrieved_chunks)
 
         # Step 2: 构建 messages
@@ -154,6 +154,7 @@ class Generator:
         parser = CitationParser()
 
         async for token in provider.chat_stream(messages=messages):
+            # 通过feed将LLM的resp拆分为 text/citation等event
             events = parser.feed(token)
             for event in events:
                 yield event

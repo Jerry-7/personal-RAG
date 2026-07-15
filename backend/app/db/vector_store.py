@@ -51,8 +51,8 @@ class VectorStore:
         self._id_map_path = self._index_dir / "id_map.pkl"
 
         # 内部 ID → chunk_id 映射
-        self._id_map: dict[int, str] = {}
-        self._reverse_id_map: dict[str, int] = {}
+        self._id_map: dict[int, str] = {} # <id, uuid>
+        self._reverse_id_map: dict[str, int] = {} # <uuid, id>
         self._next_id: int = 0
 
         # 加载或创建 FAISS 索引
