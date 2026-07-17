@@ -128,9 +128,11 @@ export function SettingsModal() {
                       }
                       className="w-full rounded-lg border px-3 py-2 text-sm bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
                     >
-                      {models?.ollama_llm_models?.map((m) => (
-                        <option key={m} value={m}>{m}</option>
-                      )) || <option>{settings.ollama.llm_model}</option>}
+                      {(models?.ollama_llm_models?.length ?? 0) > 0
+                        ? models!.ollama_llm_models.map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))
+                        : <option value={settings.ollama.llm_model}>{settings.ollama.llm_model}</option>}
                     </select>
                   </div>
                 </>
@@ -184,9 +186,11 @@ export function SettingsModal() {
                     }
                     className="w-full rounded-lg border px-3 py-2 text-sm bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
                   >
-                    {models?.ollama_embed_models?.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    )) || <option>{settings.ollama.embedding_model}</option>}
+                    {(models?.ollama_embed_models?.length ?? 0) > 0
+                      ? models!.ollama_embed_models.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))
+                      : <option value={settings.ollama.embedding_model}>{settings.ollama.embedding_model}</option>}
                   </select>
                 </div>
               )}

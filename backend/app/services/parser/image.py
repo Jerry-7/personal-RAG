@@ -181,24 +181,22 @@ class ImageParser(BaseParser):
 
         # PaddleOCR 单例避免重复初始化
         if not hasattr(ImageParser, "_paddle_instance"):
+            # PaddleOCR 3.x 不再支持 show_log，改用 logging 控制
+            import logging
+            logging.getLogger("ppocr").setLevel(logging.WARNING)
+            logging.getLogger("paddleocr").setLevel(logging.WARNING)
             ImageParser._paddle_instance = PaddleOCR(
-                use_angle_cls=True,  # 文字方向分类
+                use_textline_orientation=True,  # 文字方向分类 (替代废弃的 use_angle_cls)
                 lang="ch",           # 中英文混合
-                show_log=False,
             )
 
         ocr = ImageParser._paddle_instance
-        result = ocr.ocr(file_path, cls=True)
+        result = ocr.ocr(file_path)
 
-        if not result or not result[0]:
+        if not result:
             return ""
 
-        # 拼接识别结果
-        lines = []
-        for line_data in result[0]:
-            if line_data and len(line_data) >= 2:
-                text = line_data[1][0]  # (box, (text, confidence))
-                if text:
-                    lines.append(text)
-
-        return "\n".join(lines)
+        # PaddleOCR 3.x 返回 OCRResult 对象列表，直接取 rec_texts
+        ocr_res = result[0]
+        texts = ocr_res.get("rec_texts", []) if hasattr(ocr_res, 'get') else []
+        return "\n".join(texts)
