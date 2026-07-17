@@ -143,6 +143,7 @@ class AgentLoop:
                 response: AgentResponse = await self.provider.chat_with_tools(
                     messages=messages,
                     tools=tools_schema,
+                    max_tokens=4096,
                 )
             except Exception as e:
                 logger.exception("LLM call failed at iteration %d", iteration)
@@ -192,26 +193,17 @@ class AgentLoop:
                 continue
 
             elif response.content:
-                # LLM 给出最终文本回答
-                # 流式输出最终回答
+                # LLM 给出最终文本回答 — 直接流式输出已有内容
+                # 不再重复调用 chat_stream，避免二次生成导致截断
                 from app.services.citation import CitationParser
 
                 parser = CitationParser()
-                full_content = ""
+                full_content = response.content
 
-                async for token in self.provider.chat_stream(
-                    messages=messages,
-                ):
-                    full_content += token
-                    citation_events = parser.feed(token)
-                    for evt in citation_events:
-                        if evt["type"] == "token":
-                            yield {"event": "token", "data": evt["text"]}
-                        elif evt["type"] == "citation":
-                            yield {"event": "citation", "data": {"index": evt["index"]}}
-
-                # 刷新引用缓冲区
-                for evt in parser.flush():
+                # 用 CitationParser 解析完整内容，模拟流式 token 输出
+                # 这样可以检测 [N] 引用标记
+                events = parser.feed(full_content) + parser.flush()
+                for evt in events:
                     if evt["type"] == "token":
                         yield {"event": "token", "data": evt["text"]}
                     elif evt["type"] == "citation":
@@ -250,13 +242,23 @@ class AgentLoop:
         from app.services.citation import CitationParser
 
         parser = CitationParser()
-        async for token in self.provider.chat_stream(messages=messages):
+        async for token in self.provider.chat_stream(
+            messages=messages,
+            max_tokens=4096,
+        ):
             citation_events = parser.feed(token)
             for evt in citation_events:
                 if evt["type"] == "token":
                     yield {"event": "token", "data": evt["text"]}
                 elif evt["type"] == "citation":
                     yield {"event": "citation", "data": {"index": evt["index"]}}
+
+        # 刷新缓冲区
+        for evt in parser.flush():
+            if evt["type"] == "token":
+                yield {"event": "token", "data": evt["text"]}
+            elif evt["type"] == "citation":
+                yield {"event": "citation", "data": {"index": evt["index"]}}
 
         # 不 yield done —— chat.py 在生成器耗尽后处理
 

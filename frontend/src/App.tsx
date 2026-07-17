@@ -6,16 +6,13 @@
 
 import { AppShell } from './components/layout/AppShell';
 import { ChatContainer } from './components/chat/ChatContainer';
-import { EmptyChat } from './components/chat/EmptyChat';
 import { DocumentUploader } from './components/documents/DocumentUploader';
 import { DocumentList } from './components/documents/DocumentList';
 import { CitationSidebar } from './components/citations/CitationSidebar';
 import { SettingsModal } from './components/settings/SettingsModal';
-import { useChatStore } from './store/chatStore';
 import { useSettingsStore } from './store/settingsStore';
 
 function App() {
-  const messages = useChatStore((s) => s.messages);
   const isSettingsOpen = useSettingsStore((s) => s.isSettingsOpen);
 
   return (
@@ -28,9 +25,7 @@ function App() {
         </div>
 
         {/* 中心内容 - 聊天 */}
-        <div className="flex flex-col h-full">
-          {messages.length === 0 ? <EmptyChat /> : <ChatContainer />}
-        </div>
+        <ChatContainer />
 
         {/* 右侧面板 - 引用来源 */}
         <CitationSidebar />
