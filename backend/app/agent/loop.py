@@ -179,7 +179,7 @@ class AgentLoop:
                             "type": "function",
                             "function": {
                                 "name": tc.name,
-                                "arguments": str(tc.arguments),
+                                "arguments": tc.arguments,
                             },
                         }],
                     })
