@@ -30,3 +30,39 @@ export interface UploadResponse {
   status: string;
   created_at: string;
 }
+
+/** SSE 进度事件 */
+export interface ProgressEvent {
+  doc_id: string;
+  status: DocumentStatus;
+  message: string;
+}
+
+/** SSE 完成事件 */
+export interface ProgressDoneEvent {
+  doc_id: string;
+  status: 'indexed';
+  chunk_count?: number;
+}
+
+/** SSE 错误事件 */
+export interface ProgressErrorEvent {
+  doc_id: string;
+  status: 'error';
+  message: string;
+}
+
+/** SSE 进度流回调 */
+export interface ProgressCallbacks {
+  onProgress: (event: ProgressEvent) => void;
+  onDone: (event: ProgressDoneEvent) => void;
+  onError: (event: ProgressErrorEvent) => void;
+}
+
+/** 正在处理的任务 */
+export interface ProcessingTask {
+  docId: string;
+  filename: string;
+  status: DocumentStatus;
+  message: string;
+}

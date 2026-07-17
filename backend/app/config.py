@@ -34,8 +34,8 @@ class Settings(BaseSettings):
 
     # ── Ollama 配置 ───────────────────────────────────────────
     ollama_base_url: str = "http://localhost:11434"
-    ollama_embedding_model: str = "nomic-embed-text"
-    ollama_llm_model: str = "qwen2.5:14b"
+    ollama_embedding_model: str = "bge-m3"
+    ollama_llm_model: str = "qwen3.5-9b"
 
     # ── OpenAI 配置 (可选) ────────────────────────────────────
     openai_api_key: Optional[str] = None
@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     retrieval_top_k: int = 8
     final_top_k: int = 4
     embedding_batch_size: int = 32
+
+    # ── 后台任务配置 ──────────────────────────────────────────
+    max_concurrent_indexing_tasks: int = 10
+    indexing_shutdown_timeout_secs: int = 30
 
     # ── 默认 Provider 选择 ────────────────────────────────────
     llm_provider: str = "ollama"          # "ollama" | "openai" | "anthropic"

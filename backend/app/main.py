@@ -66,7 +66,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # ── 关闭 ──────────────────────────────────────────────────
-    pass
+    from app.services.task_manager import task_manager
+    await task_manager.shutdown(timeout=settings.indexing_shutdown_timeout_secs)
 
 
 # ── 创建 FastAPI 应用 ──────────────────────────────────────────

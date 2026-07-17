@@ -29,22 +29,21 @@ class VectorStore:
     使用 IndexIDMap 包装 IndexFlatIP 实现余弦相似度搜索。
     向量在添加时自动 L2 归一化。
     索引持久化到磁盘，支持重启恢复。
+    向量维度在首次添加时自动检测，或从磁盘索引恢复。
 
     Attributes:
         index_path: FAISS 索引文件路径
-        dim: 向量维度 (nomic-embed-text: 768)
+        dim: 向量维度（自动检测，首次添加前为 None）
     """
 
-    def __init__(self, dim: int = 768) -> None:
+    def __init__(self) -> None:
         """
         初始化 FAISS 向量存储。
 
-        尝试从磁盘加载已有索引，如果不存在则创建新索引。
-
-        Args:
-            dim: 向量维度，默认 768 (nomic-embed-text 输出维度)
+        尝试从磁盘加载已有索引，如果不存在则在首次添加向量时
+        根据实际 embedding 维度自动创建。
         """
-        self.dim = dim
+        self.dim: int | None = None
         self._index_dir = Path(settings.data_dir) / "faiss"
         self._index_dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self._index_dir / "rag_index.faiss"
@@ -58,23 +57,23 @@ class VectorStore:
         # 加载或创建 FAISS 索引
         if self._index_path.exists() and self._id_map_path.exists():
             self._load()
-        else:
-            self._create_new()
+        # 不在这里 _create_new()，等首次 add_chunks 时按实际维度创建
 
     @property
     def index(self) -> faiss.Index:
         """获取底层 FAISS 索引（用于直接操作）。"""
         return self._index
 
-    def _create_new(self) -> None:
+    def _create_new(self, dim: int) -> None:
         """创建新的 FAISS 索引。使用内积 (Inner Product) 度量。"""
-        # IndexFlatIP: 内积搜索 = 对归一化向量的余弦相似度
-        quantizer = faiss.IndexFlatIP(self.dim)
+        self.dim = dim
+        quantizer = faiss.IndexFlatIP(dim)
         self._index = faiss.IndexIDMap(quantizer)
 
     def _load(self) -> None:
         """从磁盘加载 FAISS 索引和 ID 映射。"""
         self._index = faiss.read_index(str(self._index_path))
+        self.dim = self._index.d
         with open(self._id_map_path, "rb") as f:
             data = pickle.load(f)
         self._id_map = data.get("id_map", {})
@@ -136,6 +135,17 @@ class VectorStore:
 
         # 转换为 numpy 并归一化
         vectors = np.array(embeddings, dtype=np.float32)
+
+        # 首次添加时根据实际向量维度自动创建索引
+        if not hasattr(self, '_index'):
+            self._create_new(vectors.shape[1])
+        elif vectors.shape[1] != self.dim:
+            raise ValueError(
+                f"向量维度不匹配: 期望 {self.dim}, 实际 {vectors.shape[1]}。"
+                f"请检查 embedding 模型是否发生了变更，可能需要删除旧索引后重新导入。"
+                f"\n旧索引路径: {self._index_path}"
+            )
+
         vectors = self._normalize(vectors)
 
         # 分配内部 ID
@@ -183,8 +193,8 @@ class VectorStore:
                 "distances": [[dist1, dist2, ...]]
             }
         """
-        # 当前索引中已经存储的向量总数
-        if self._index.ntotal == 0:
+        # 索引尚未创建
+        if not hasattr(self, '_index') or self._index.ntotal == 0:
             return {
                 "ids": [[]],
                 "documents": [[]],
@@ -296,14 +306,14 @@ class VectorStore:
         这会从旧索引中提取保留的向量，创建新索引。
         """
         if not self._id_map:
-            self._create_new()
+            self._create_new(self.dim or 768)
             self._next_id = 0
             self._save()
             return
 
         # 重建: 从旧索引提取保留的向量
         old_index = self._index
-        new_index = faiss.IndexIDMap(faiss.IndexFlatIP(self.dim))
+        new_index = faiss.IndexIDMap(faiss.IndexFlatIP(self.dim or 768))
 
         # 保留映射中的 ID
         keep_ids = sorted(self._id_map.keys())
@@ -326,6 +336,8 @@ class VectorStore:
 
     def count(self) -> int:
         """返回向量存储中的分块总数。"""
+        if not hasattr(self, '_index'):
+            return 0
         return self._index.ntotal
 
 

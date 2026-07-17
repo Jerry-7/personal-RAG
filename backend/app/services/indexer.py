@@ -40,6 +40,8 @@ class IndexingPipeline:
 
     async def index_document(
         self,
+        *,
+        doc_id: str,
         file_path: str,
         original_name: str,
         file_type: str,
@@ -50,7 +52,11 @@ class IndexingPipeline:
         """
         执行完整的文档索引流程。
 
+        Document 记录由调用方（upload 端点）预先创建，
+        此方法只负责解析→分块→嵌入→存储→标记完成。
+
         Args:
+            doc_id: 文档唯一 ID（由调用方创建）
             file_path: 上传文件的本地路径
             original_name: 用户上传的原始文件名
             file_type: 文件类型扩展名
@@ -66,28 +72,6 @@ class IndexingPipeline:
             RuntimeError: 索引过程中发生错误
         """
         from app.db.models import Document, Chunk
-
-        # ── Step 0: 查找或创建文档记录 ───────────────────────
-        existing = db.query(Document).filter(Document.file_hash == file_hash).first()
-        if existing:
-            if existing.status == "indexed":
-                return existing.id
-            # 如果存在但未成功索引，重用记录
-            doc_id = existing.id
-        else:
-            doc_id = str(uuid.uuid4())
-            doc = Document(
-                id=doc_id,
-                filename=Path(file_path).name,
-                original_name=original_name,
-                file_type=file_type,
-                file_size_bytes=Path(file_path).stat().st_size,
-                file_hash=file_hash,
-                file_path=file_path,
-                status="uploaded",
-            )
-            db.add(doc)
-            db.commit()
 
         # ── Step 1: 解析 ────────────────────────────────────
         await self._notify(progress_callback, "parsing", "正在解析文件...")

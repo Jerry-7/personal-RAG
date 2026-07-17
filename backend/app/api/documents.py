@@ -6,12 +6,15 @@
 上传文件后触发后台异步索引流水线。
 """
 
+import asyncio
 import hashlib
-import shutil
+import json
+import uuid
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -23,8 +26,11 @@ from app.schemas.document import (
     DocumentListResponse,
     DocumentUploadResponse,
 )
+from app.services.event_bus import event_bus
 from app.services.indexer import indexing_pipeline
+from app.services.indexing_worker import run_indexing
 from app.services.parser.registry import parser_registry
+from app.services.task_manager import task_manager
 
 router = APIRouter()
 
@@ -83,19 +89,58 @@ async def upload_document(
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     dest_path.write_bytes(content)
 
-    # ── 触发后台索引 ─────────────────────────────────────────
-    try:
-        doc_id = await indexing_pipeline.index_document(
+    # ── 检查队列容量 ─────────────────────────────────────────
+    if not task_manager.can_accept():
+        raise HTTPException(
+            status_code=429,
+            detail=f"索引队列已满 ({task_manager.active_count}/{task_manager.max_concurrent})，请稍后再试",
+        )
+
+    # ── 去重检查 ──────────────────────────────────────────────
+    existing = db.query(Document).filter(Document.file_hash == file_hash).first()
+    if existing:
+        if existing.status == "indexed":
+            # 已成功索引，直接返回
+            return DocumentUploadResponse(
+                id=existing.id,
+                filename=existing.filename,
+                original_name=existing.original_name,
+                file_type=existing.file_type,
+                status=existing.status,
+                created_at=existing.created_at,
+            )
+        # 存在但未成功索引，重用记录
+        doc_id = existing.id
+    else:
+        # 创建文档记录（indexer 不再负责创建）
+        doc_id = str(uuid.uuid4())
+        doc = Document(
+            id=doc_id,
+            filename=safe_name,
+            original_name=file.filename,
+            file_type=ext,
+            file_size_bytes=file_size,
+            file_hash=file_hash,
             file_path=str(dest_path),
+            status="uploaded",
+        )
+        db.add(doc)
+        db.commit()
+
+    # ── 提交后台索引任务 ─────────────────────────────────────
+    file_path_str = str(dest_path)
+    await task_manager.submit(
+        doc_id,
+        lambda: run_indexing(
+            doc_id=doc_id,
+            file_path=file_path_str,
             original_name=file.filename,
             file_type=ext,
             file_hash=file_hash,
-            db=db,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"索引失败: {str(e)}")
+        ),
+    )
 
-    # ── 查询文档信息 ─────────────────────────────────────────
+    # ── 立即返回 ─────────────────────────────────────────────
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc:
         raise HTTPException(status_code=500, detail="文档创建失败")
@@ -107,6 +152,51 @@ async def upload_document(
         file_type=doc.file_type,
         status=doc.status,
         created_at=doc.created_at,
+    )
+
+
+@router.get("/documents/{doc_id}/progress")
+async def stream_document_progress(doc_id: str):
+    """
+    通过 SSE 流式推送单个文档的索引进度。
+
+    前端上传文件后立即连接此端点，接收实时进度事件。
+    事件类型：
+      - progress: 索引进度更新（parsing/chunking/embedding/storing）
+      - done: 索引成功完成
+      - error: 索引失败
+
+    Args:
+        doc_id: 文档唯一 ID
+
+    Returns:
+        StreamingResponse (text/event-stream)
+    """
+    queue = event_bus.subscribe(doc_id)
+
+    async def event_generator():
+        try:
+            while True:
+                event = await queue.get()
+                event_type = event.get("event", "progress")
+                data = json.dumps(event.get("data", {}), ensure_ascii=False)
+                yield f"event: {event_type}\ndata: {data}\n\n"
+                if event_type in ("done", "error"):
+                    break
+        except asyncio.CancelledError:
+            # 客户端断开连接
+            pass
+        finally:
+            event_bus.unsubscribe(doc_id)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
