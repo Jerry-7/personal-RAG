@@ -73,7 +73,7 @@ class IndexingPipeline:
         """
         from app.db.models import Document, Chunk
 
-        # ── Step 1: 解析 ────────────────────────────────────
+        # ── Step 1: 解析（线程池执行，避免 CPU 密集型 OCR 阻塞事件循环）──
         await self._notify(progress_callback, "parsing", "正在解析文件...")
         parser = parser_registry.get_parser(file_type)
         if parser is None:
@@ -81,7 +81,11 @@ class IndexingPipeline:
             raise ValueError(f"不支持的文件类型: {file_type}")
 
         try:
-            parsed_doc = parser.parse(file_path)
+            # 图片 OCR（PaddleOCR/Tesseract）和音视频转录（Whisper）
+            # 是 CPU 密集型操作，通过 asyncio.to_thread 放入线程池执行，
+            # 避免阻塞事件循环，确保并发索引时其他文档不受影响。
+            # PDF/DOCX/TXT 等轻量解析同样走此路径，开销可忽略。
+            parsed_doc = await asyncio.to_thread(parser.parse, file_path)
         except Exception as e:
             self._mark_error(db, doc_id, f"解析失败: {str(e)}")
             raise RuntimeError(f"解析文件失败: {e}") from e
