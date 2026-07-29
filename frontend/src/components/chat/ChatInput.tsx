@@ -22,6 +22,7 @@ export function ChatInput() {
   const startStreaming = useChatStore((s) => s.startStreaming);
   const appendToken = useChatStore((s) => s.appendToken);
   const finishStreaming = useChatStore((s) => s.finishStreaming);
+  const setConversationId = useChatStore((s) => s.setConversationId);
   const conversationId = useChatStore((s) => s.conversationId);
   const documents = useDocumentStore((s) => s.documents);
   const indexedCount = documents.filter((d) => d.status === 'indexed').length;
@@ -42,6 +43,10 @@ export function ChatInput() {
         // CitationMark 追加由 appendToken 中的 addCitation 处理
       },
       onDone: (data) => {
+        // 首次对话时记录 conversation_id，后续消息才能归属到同一对话
+        if (!conversationId && data.conversation_id) {
+          setConversationId(data.conversation_id);
+        }
         finishStreaming(data.citations, data.message_id);
         setIsSending(false);
       },
@@ -51,7 +56,7 @@ export function ChatInput() {
         setIsSending(false);
       },
     });
-  }, [input, isSending, conversationId, addUserMessage, startStreaming, appendToken, finishStreaming]);
+  }, [input, isSending, conversationId, addUserMessage, startStreaming, appendToken, finishStreaming, setConversationId]);
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {

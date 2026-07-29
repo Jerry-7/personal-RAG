@@ -107,11 +107,26 @@ async def chat_query(
     db.add(user_msg)
     db.commit()
 
+    # ── 加载历史对话（供 LLM 上下文） ──────────────────────────
+    # 查询该对话的历史消息（按时间升序），转换为 [{role, content}, ...]
+    history_messages = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.asc())
+        .all()
+    )
+    chat_history = [
+        {"role": m.role, "content": m.content}
+        for m in history_messages
+        # 排除刚保存的 user 消息（避免重复），也排除不含有效内容的
+        if m.content.strip() and (m.id != user_msg.id)
+    ]
+
     # ── 根据配置选择模式 ──────────────────────────────────────
     if settings.agent_enabled:
-        stream = _agent_event_generator(question, conversation_id, db, conv)
+        stream = _agent_event_generator(question, conversation_id, db, conv, chat_history)
     else:
-        stream = _classic_event_generator(question, top_k, conversation_id, db, conv)
+        stream = _classic_event_generator(question, top_k, conversation_id, db, conv, chat_history)
 
     return EventSourceResponse(stream)
 
@@ -122,6 +137,7 @@ async def _classic_event_generator(
     conversation_id: str,
     db: Session,
     conv: Conversation,
+    chat_history: list[dict[str, str]],
 ):
     """
     经典 RAG 模式事件生成器。
@@ -158,6 +174,7 @@ async def _classic_event_generator(
         async for event in generator.generate_stream(
             question=question,
             retrieved_chunks=retrieved_chunks,
+            chat_history=chat_history,
         ):
             # 检查取消标志
             if conversation_id and conversation_id in _cancellation_flags:
@@ -217,6 +234,7 @@ async def _agent_event_generator(
     conversation_id: str,
     db: Session,
     conv: Conversation,
+    chat_history: list[dict[str, str]],
 ):
     """
     Agent 模式事件生成器。
@@ -255,6 +273,7 @@ async def _agent_event_generator(
         async for event in agent.run(
             question=question,
             conversation_id=conversation_id,
+            chat_history=chat_history,
         ):
             evt_type = event.get("event", "")
             data = event.get("data", "")
