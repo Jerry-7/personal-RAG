@@ -170,7 +170,17 @@ class ImageParser(BaseParser):
 
         PaddleOCR 对中英文混合识别效果最好（95%+ 中文准确率），
         但依赖 PaddlePaddle（~500MB）。
+
+        注意：必须在导入 paddleocr 之前设置 FLAGS_enable_pir_api=0，
+        解决 PaddlePaddle 3.x 在 Windows 上 PIR + oneDNN 的兼容性 bug。
         """
+        import os as _os
+        # PaddlePaddle 3.x 的 PIR (Paddle IR) 模式与 oneDNN 后端
+        # 在 Windows 上不兼容，推理时抛出 ConvertPirAttribute2RuntimeAttribute
+        # 错误。禁用 PIR 回退到旧执行路径可规避此问题。
+        if not _os.environ.get("FLAGS_enable_pir_api"):
+            _os.environ["FLAGS_enable_pir_api"] = "0"
+
         try:
             from paddleocr import PaddleOCR
         except ImportError:
