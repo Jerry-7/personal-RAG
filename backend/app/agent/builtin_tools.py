@@ -9,6 +9,11 @@
 - search_knowledge_base: 在已上传文档中搜索
 - list_documents: 列出所有已索引文档
 - read_chunk: 读取指定分块的完整文本
+
+引用追踪：
+    每次 search_knowledge_base 调用时，所有检索到的 chunk 会被
+    注册到全局引用表中，分配唯一编号。LLM 在回答中使用 [N] 格式
+    引用来源，chat.py 从引用表构建完整的 CitationData。
 """
 
 import logging
@@ -25,6 +30,16 @@ logger = logging.getLogger(__name__)
 # 当前请求的数据库会话（由 AgentLoop 设置）
 _current_db: ContextVar[Optional[Session]] = ContextVar("agent_db", default=None)
 
+# Agent 引用注册表：记录跨工具调用的所有检索结果
+# 格式: [(citation_index, {chunk_metadata}), ...]
+# citation_index 从 1 开始全局递增
+_agent_citations: ContextVar[Optional[list[dict[str, Any]]]] = ContextVar(
+    "agent_citations", default=None
+)
+_agent_citation_counter: ContextVar[int] = ContextVar(
+    "agent_citation_counter", default=0
+)
+
 
 def set_db_context(db: Session) -> None:
     """设置当前请求的数据库会话上下文。"""
@@ -39,12 +54,55 @@ def _get_db() -> Session:
     return db
 
 
+def reset_citation_registry() -> None:
+    """重置引用注册表（每个新请求开始时调用）。"""
+    _agent_citations.set([])
+    _agent_citation_counter.set(0)
+
+
+def get_citation_registry() -> list[dict[str, Any]]:
+    """获取当前请求的引用注册表。"""
+    return _agent_citations.get() or []
+
+
+def _register_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    将检索到的 chunks 注册到全局引用表，分配唯一编号。
+
+    Returns:
+        带 citation_index 的 chunk 列表
+    """
+    citations = _agent_citations.get() or []
+    counter = _agent_citation_counter.get() or 0
+
+    registered = []
+    for chunk in chunks:
+        counter += 1
+        citations.append({
+            "index": counter,
+            "document_id": chunk.get("document_id", ""),
+            "chunk_id": chunk.get("chunk_id", ""),
+            "snippet": chunk.get("text", "")[:200],
+            "filename": chunk.get("filename", ""),
+            "page_number": chunk.get("page_number"),
+            "start_timestamp": chunk.get("start_timestamp"),
+            "end_timestamp": chunk.get("end_timestamp"),
+            "source_type": chunk.get("source_type", "text"),
+        })
+        registered.append({**chunk, "_citation_index": counter})
+
+    _agent_citations.set(citations)
+    _agent_citation_counter.set(counter)
+    return registered
+
+
 async def _search_knowledge_base(query: str, top_k: int = 4) -> str:
     """
     在已上传文档中搜索相关内容。
 
     将用户的问题或关键词转为向量，在 FAISS 中检索最相似的分块，
-    返回格式化的上下文文本供 LLM 使用。
+    返回格式化的上下文文本供 LLM 使用。结果以全局编号 [N] 标记，
+    LLM 在最终回答中应使用 [N] 引用来源。
 
     Args:
         query: 搜索关键词或问题
@@ -56,10 +114,26 @@ async def _search_knowledge_base(query: str, top_k: int = 4) -> str:
     if not chunks:
         return "未找到相关文档。请尝试不同的搜索关键词。"
 
-    # 格式化为 LLM 易读的格式（复用 generator 的格式逻辑）
-    from app.services.generator import generator
+    # 注册到全局引用表，分配唯一编号
+    registered = _register_chunks(chunks)
 
-    return generator.build_context(chunks)
+    # 格式化为 LLM 易读的格式，使用全局引用编号
+    parts = []
+    for chunk in registered:
+        idx = chunk["_citation_index"]
+        source_label = f"[{idx}] (from {chunk.get('filename', 'unknown')}"
+        if chunk.get("page_number"):
+            source_label += f", page {chunk['page_number']}"
+        if chunk.get("start_timestamp") is not None:
+            start = chunk["start_timestamp"]
+            end = chunk.get("end_timestamp", start)
+            m1, s1 = divmod(int(start), 60)
+            m2, s2 = divmod(int(end), 60)
+            source_label += f", {m1:02d}:{s1:02d}-{m2:02d}:{s2:02d}"
+        source_label += ")"
+        parts.append(f"{source_label}:\n{chunk['text']}")
+
+    return "\n\n".join(parts)
 
 
 async def _list_documents() -> str:

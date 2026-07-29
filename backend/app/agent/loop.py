@@ -35,14 +35,17 @@ You can search uploaded documents to find information that helps answer the user
 ## Rules
 1. Carefully analyze the user's question to determine what information you need.
 2. Use the tools to search for relevant information. Try different search keywords if needed.
-3. When citing information from documents, use [1], [2] etc. to reference sources.
+3. When citing information from search results, use the exact [N] numbers shown
+   in the tool output. For example, if a result is marked "[3] (from report.pdf)",
+   cite it as [3] in your answer. Do NOT renumber or create your own numbers.
 4. If multiple searches don't find relevant info, honestly tell the user.
 5. After gathering sufficient information, provide a comprehensive answer.
 6. Do NOT make up information not found in the search results.
 
 ## Response Format
 - If you need to search, just call the tool directly — no need to explain.
-- After receiving search results, synthesize a complete answer in the user's language."""
+- After receiving search results, synthesize a complete answer in the user's language.
+- Always include citation numbers like [1], [2] when using information from search results."""
 
 
 class AgentLoop:

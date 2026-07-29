@@ -225,11 +225,18 @@ async def _agent_event_generator(
     通过 tool_call/tool_result 事件向前端展示思考过程。
     """
     from app.agent.loop import AgentLoop
-    from app.agent.builtin_tools import set_db_context
+    from app.agent.builtin_tools import (
+        get_citation_registry,
+        reset_citation_registry,
+        set_db_context,
+    )
     from app.services.generator import generator as gen_service
 
     # 设置当前请求的数据库上下文（供内置工具使用）
     set_db_context(db)
+
+    # 重置引用注册表（新请求开始时清空）
+    reset_citation_registry()
 
     # 创建 LLM provider
     llm_provider = await gen_service._get_provider()
@@ -296,12 +303,24 @@ async def _agent_event_generator(
 
         # ── 保存 AI 消息 ──────────────────────────────────────
         if full_content.strip():
-            # Agent 模式下引用元数据为简化版（多轮检索难以精确追踪来源）
+            # Agent 模式下：从全局引用注册表构建引用元数据
+            # 只保留 LLM 实际使用的引用编号（通过 [N] 检测到的）
+            all_registered = get_citation_registry()
+            registered_by_index = {c["index"]: c for c in all_registered}
             citations = [
-                {"index": idx, "document_id": "", "chunk_id": "",
-                 "snippet": f"来源 [{idx}]", "filename": "", "source_type": "text"}
+                registered_by_index[idx]
                 for idx in sorted(used_indices)
+                if idx in registered_by_index
             ]
+
+            # 兜底：如果 LLM 使用了引用但注册表中找不到对应编号，
+            # 保留空的兜底条目（前端至少能显示引用标记）
+            for idx in sorted(used_indices):
+                if idx not in registered_by_index:
+                    citations.append({
+                        "index": idx, "document_id": "", "chunk_id": "",
+                        "snippet": f"来源 [{idx}]", "filename": "", "source_type": "text",
+                    })
 
             ai_msg = Message(
                 id=str(uuid.uuid4()),
