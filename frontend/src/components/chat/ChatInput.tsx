@@ -40,7 +40,8 @@ export function ChatInput() {
     abortRef.current = streamChatQuery(text, conversationId, {
       onToken: appendToken,
       onCitation: (_index) => {
-        // CitationMark 追加由 appendToken 中的 addCitation 处理
+        // [N] 标记已由后端作为 token 事件发送（含 "[1]" 文本），
+        // 前端 appendToken 自动将其追加到 streamingText，无需额外处理
       },
       onDone: (data) => {
         // 首次对话时记录 conversation_id，后续消息才能归属到同一对话

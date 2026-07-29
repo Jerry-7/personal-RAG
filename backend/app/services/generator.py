@@ -157,10 +157,15 @@ class Generator:
             events = parser.feed(token)
             for event in events:
                 yield event
+                # 重插 [N] 为 token，确保保存的文本和前端显示都包含引用标记
+                if event["type"] == "citation":
+                    yield {"type": "token", "text": f"[{event['index']}]"}
 
         # 刷新缓冲区
         for event in parser.flush():
             yield event
+            if event["type"] == "citation":
+                yield {"type": "token", "text": f"[{event['index']}]"}
 
     def get_citations_for_chunks(
         self,

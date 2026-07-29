@@ -200,21 +200,30 @@ class AgentLoop:
                 continue
 
             elif response.content:
-                # LLM 给出最终文本回答 — 直接流式输出已有内容
-                # 不再重复调用 chat_stream，避免二次生成导致截断
+                # LLM 给出最终文本回答 — 用 CitationParser 解析后逐块流式输出
+                # 关键：不直接 yield 全部内容，而是模拟字符级流式，并重插 [N]
+                import asyncio
                 from app.services.citation import CitationParser
 
                 parser = CitationParser()
                 full_content = response.content
 
-                # 用 CitationParser 解析完整内容，模拟流式 token 输出
-                # 这样可以检测 [N] 引用标记
                 events = parser.feed(full_content) + parser.flush()
                 for evt in events:
                     if evt["type"] == "token":
-                        yield {"event": "token", "data": evt["text"]}
+                        text = evt["text"]
+                        # 按字符逐块 yield，模拟真实流式打字效果
+                        # 每个 yield 之间 await 让出事件循环，确保 SSE 逐帧推送
+                        chunk_size = max(1, len(text) // 15) if len(text) > 30 else 1
+                        for i in range(0, len(text), chunk_size):
+                            chunk = text[i:i + chunk_size]
+                            yield {"event": "token", "data": chunk}
+                            await asyncio.sleep(0)
                     elif evt["type"] == "citation":
                         yield {"event": "citation", "data": {"index": evt["index"]}}
+                        # 重插 [N] 为 token，前端流式显示 + DB 保存的文本都包含引用标记
+                        yield {"event": "token", "data": f"[{evt['index']}]"}
+                        await asyncio.sleep(0)
 
                 return  # 生成完毕，交由 chat.py 发送 done
 
@@ -289,6 +298,8 @@ class AgentLoop:
                     yield {"event": "token", "data": evt["text"]}
                 elif evt["type"] == "citation":
                     yield {"event": "citation", "data": {"index": evt["index"]}}
+                    # 重插 [N] 为 token，确保最终文本包含引用标记
+                    yield {"event": "token", "data": f"[{evt['index']}]"}
 
         # 刷新缓冲区
         for evt in parser.flush():
@@ -296,6 +307,7 @@ class AgentLoop:
                 yield {"event": "token", "data": evt["text"]}
             elif evt["type"] == "citation":
                 yield {"event": "citation", "data": {"index": evt["index"]}}
+                yield {"event": "token", "data": f"[{evt['index']}]"}
 
         # 不 yield done —— chat.py 在生成器耗尽后处理
 
