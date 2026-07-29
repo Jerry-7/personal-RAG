@@ -14,6 +14,25 @@ from PIL import Image
 
 from app.services.parser.base import BaseParser, ParsedDocument
 
+# ── PaddlePaddle 3.x Windows 兼容性修复 ───────────────────────────────
+# PaddlePaddle 3.x 的 PIR (Paddle IR) 编译器与 oneDNN 后端在 Windows 上
+# 存在兼容性问题，推理时抛出:
+#   ConvertPirAttribute2RuntimeAttribute not support
+#   [pir::ArrayAttribute<pir::DoubleAttribute>]
+#
+# 解决方案：禁用 oneDNN 后端，让 PaddlePaddle 使用原生 CPU kernel。
+# 这绕过了 PIR→oneDNN 的属性转换路径，性能影响可忽略（OCR 操作本身是
+# CPU 密集型，oneDNN 对此类操作加速不明显）。
+#
+# 关键：这些环境变量必须在 paddle 首次被 import 之前设置。由于
+# ImageParser 是在 main.py lifespan 中首次实例化的（非惰性导入），
+# 只需确保本模块导入时设置即可——paddleocr 是惰性导入的，第一次
+# OCR 调用时才触发 import paddle。
+import os as _os
+_os.environ.setdefault("FLAGS_enable_pir_api", "0")
+_os.environ.setdefault("FLAGS_use_mkldnn", "0")       # 禁用 oneDNN
+_os.environ.setdefault("PADDLE_DISABLE_ONEDNN", "1")  # Paddle 3.x 新增标志
+
 
 class ImageParser(BaseParser):
     """
@@ -171,16 +190,10 @@ class ImageParser(BaseParser):
         PaddleOCR 对中英文混合识别效果最好（95%+ 中文准确率），
         但依赖 PaddlePaddle（~500MB）。
 
-        注意：必须在导入 paddleocr 之前设置 FLAGS_enable_pir_api=0，
-        解决 PaddlePaddle 3.x 在 Windows 上 PIR + oneDNN 的兼容性 bug。
+        PaddlePaddle 兼容性环境变量（FLAGS_enable_pir_api=0,
+        FLAGS_use_mkldnn=0, PADDLE_DISABLE_ONEDNN=1）已在模块顶层设置，
+        确保首次 import paddle 之前生效。
         """
-        import os as _os
-        # PaddlePaddle 3.x 的 PIR (Paddle IR) 模式与 oneDNN 后端
-        # 在 Windows 上不兼容，推理时抛出 ConvertPirAttribute2RuntimeAttribute
-        # 错误。禁用 PIR 回退到旧执行路径可规避此问题。
-        if not _os.environ.get("FLAGS_enable_pir_api"):
-            _os.environ["FLAGS_enable_pir_api"] = "0"
-
         try:
             from paddleocr import PaddleOCR
         except ImportError:
@@ -191,13 +204,12 @@ class ImageParser(BaseParser):
 
         # PaddleOCR 单例避免重复初始化
         if not hasattr(ImageParser, "_paddle_instance"):
-            # PaddleOCR 3.x 不再支持 show_log，改用 logging 控制
             import logging
             logging.getLogger("ppocr").setLevel(logging.WARNING)
             logging.getLogger("paddleocr").setLevel(logging.WARNING)
             ImageParser._paddle_instance = PaddleOCR(
-                use_textline_orientation=True,  # 文字方向分类 (替代废弃的 use_angle_cls)
-                lang="ch",           # 中英文混合
+                use_textline_orientation=True,
+                lang="ch",
             )
 
         ocr = ImageParser._paddle_instance
@@ -206,7 +218,6 @@ class ImageParser(BaseParser):
         if not result:
             return ""
 
-        # PaddleOCR 3.x 返回 OCRResult 对象列表，直接取 rec_texts
         ocr_res = result[0]
         texts = ocr_res.get("rec_texts", []) if hasattr(ocr_res, 'get') else []
         return "\n".join(texts)
