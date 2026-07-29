@@ -222,6 +222,49 @@ class OllamaLLMProvider(LLMProvider):
 
         # 没有 tool_calls，返回纯文本
         content = msg.get("content", "")
+
+        # 空响应恢复：有些模型（如 qwen2.5）偶尔返回空 message，
+        # 追加一条提示消息重试一次，引导模型给出文本输出
+        if not content and not raw_tool_calls:
+            logger.warning("Ollama returned empty response, retrying with continuation hint")
+            messages.append({"role": "user", "content": "Please continue."})
+            try:
+                retry_response = await self._client.chat(
+                    model=model or self._default_model,
+                    messages=messages,
+                    tools=tools,
+                    options={
+                        "temperature": temperature,
+                        "num_predict": max_tokens,
+                    },
+                )
+                retry_msg = retry_response.get("message", {})
+                retry_tool_calls = retry_msg.get("tool_calls", [])
+                if retry_tool_calls:
+                    # 重试后模型又决定调工具，解析并返回
+                    parsed = []
+                    for tc in retry_tool_calls:
+                        func = tc.get("function", tc)
+                        raw_args = func.get("arguments", {})
+                        if isinstance(raw_args, str):
+                            try:
+                                args = _json.loads(raw_args)
+                            except _json.JSONDecodeError:
+                                args = _parse_arguments_fallback(raw_args)
+                        elif isinstance(raw_args, dict):
+                            args = raw_args
+                        else:
+                            args = {}
+                        parsed.append(ToolCall(
+                            id=f"call_{len(parsed)}",
+                            name=func.get("name", ""),
+                            arguments=args,
+                        ))
+                    return AgentResponse(tool_calls=parsed)
+                content = retry_msg.get("content", "")
+            except Exception:
+                logger.exception("Retry after empty response also failed")
+
         return AgentResponse(content=content)
 
 

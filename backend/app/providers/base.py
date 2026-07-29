@@ -180,6 +180,15 @@ class LLMProvider(ABC):
         except (_json.JSONDecodeError, KeyError, TypeError):
             pass
 
+        # 空响应恢复：追加提示重试一次
+        if not content:
+            import logging
+            _logger = logging.getLogger(__name__)
+            _logger.warning("Base chat_with_tools returned empty, retrying with hint")
+            messages.append({"role": "user", "content": "Please provide your answer."})
+            retry_response = await self.chat(messages, model, temperature, max_tokens)
+            content = retry_response.content
+
         return AgentResponse(content=content)
 
 

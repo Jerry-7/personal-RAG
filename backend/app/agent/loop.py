@@ -119,7 +119,9 @@ class AgentLoop:
 
         # ── Agent 循环 ─────────────────────────────────────────
         iteration = 0
-        while iteration < self.max_iterations:
+        force_answer_reason: str = ""  # 空字符串 = 未触发强制模式
+
+        while iteration < self.max_iterations and not force_answer_reason:
             iteration += 1
             logger.debug("Agent iteration %d/%d", iteration, self.max_iterations)
 
@@ -128,15 +130,17 @@ class AgentLoop:
                 from app.api.chat import _cancellation_flags
                 if conversation_id in _cancellation_flags and _cancellation_flags[conversation_id].is_set():
                     yield {"event": "token", "data": " [生成已取消]"}
+                    force_answer_reason = "cancelled"
                     break
 
             # Step 1: LLM 决策
             tools_schema = self.tools.to_openai_format()
             if not tools_schema:
-                # 没有工具可用，回退到普通生成
+                # 没有工具可用，直接使用已有对话生成最终回答
                 logger.warning("No tools available, falling back to plain generation")
                 yield {"event": "tool_result",
                        "data": {"name": "_system", "result": "无可用工具，直接回答"}}
+                force_answer_reason = "no_tools"
                 break
 
             try:
@@ -212,32 +216,62 @@ class AgentLoop:
                 return  # 生成完毕，交由 chat.py 发送 done
 
             else:
-                # 空响应（模型可能卡住了）
-                logger.warning("Empty LLM response at iteration %d", iteration)
-                yield {"event": "error",
-                       "data": {"message": "LLM 返回空响应，请重试"}}
-                return
+                # 空响应（模型偶尔返回空消息，如 qwen2.5 某些情况下）
+                # 不直接报错，而是追加提示强制模型基于已有结果生成最终回答
+                logger.warning(
+                    "Empty LLM response at iteration %d, forcing final answer",
+                    iteration,
+                )
+                yield {
+                    "event": "tool_result",
+                    "data": {
+                        "name": "_system",
+                        "result": "LLM 返回空响应，基于已收集的信息生成回答",
+                    },
+                }
+                force_answer_reason = "empty_response"
+                break
 
-        # ── 超过最大迭代 ─────────────────────────────────────
-        logger.warning("Agent exceeded max iterations (%d)", self.max_iterations)
-        yield {
-            "event": "max_iterations",
-            "data": {
-                "message": f"Agent 达到最大搜索次数 ({self.max_iterations})，"
-                          f"基于已有结果生成回答",
-            },
-        }
-
-        # 强制生成最终回答
-        messages.append({
-            "role": "system",
-            "content": (
+        # ── 强制生成最终回答 ─────────────────────────────────
+        # 以下三种情况会到达此处:
+        #   1. 超过最大迭代次数
+        #   2. LLM 返回空响应
+        #   3. 没有可用工具
+        if force_answer_reason == "empty_response":
+            logger.info("Forcing final answer due to empty LLM response")
+            yield {
+                "event": "max_iterations",
+                "data": {"message": "模型未正常返回，基于已收集的信息生成回答"},
+            }
+            force_prompt = (
+                "Based on the tool results above, provide your best answer "
+                "to the user's original question. Cite sources if possible "
+                "using [1], [2] markers. Be honest about what you don't know."
+            )
+        elif force_answer_reason == "no_tools":
+            logger.info("Forcing final answer due to missing tools")
+            force_prompt = (
+                "Answer the user's question based on the conversation context. "
+                "Cite sources if you have any, using [1], [2] markers."
+            )
+        else:
+            # 超过最大迭代次数
+            logger.warning("Agent exceeded max iterations (%d)", self.max_iterations)
+            yield {
+                "event": "max_iterations",
+                "data": {
+                    "message": f"Agent 达到最大搜索次数 ({self.max_iterations})，"
+                              f"基于已有结果生成回答",
+                },
+            }
+            force_prompt = (
                 "You have reached the maximum number of tool calls. "
                 "Based on the information gathered so far, provide your best answer "
                 "to the user's original question. Cite sources if possible. "
                 "Be honest about what you don't know."
-            ),
-        })
+            )
+
+        messages.append({"role": "system", "content": force_prompt})
 
         from app.services.citation import CitationParser
 
