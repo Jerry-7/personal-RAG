@@ -191,6 +191,41 @@ class LLMProvider(ABC):
 
         return AgentResponse(content=content)
 
+    async def chat_with_tools_stream(
+        self,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, Any]],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """
+        流式 tool calling (Agent 模式)。
+
+        以异步生成器方式逐事件返回 LLM 输出。子类应覆盖此方法
+        使用 provider 原生流式 API。
+
+        Yields:
+            {"type": "token", "text": "..."}
+                文本片段（思考过程或最终回答）
+
+            {"type": "tool_use", "id": "...", "name": "...", "arguments": {...}}
+                完整的工具调用（已拼接增量数据）
+        """
+        # 默认实现：调用非流式 chat_with_tools，一次性 yield
+        response = await self.chat_with_tools(
+            messages, tools, model, temperature, max_tokens
+        )
+        if response.content:
+            yield {"type": "token", "text": response.content}
+        for tc in (response.tool_calls or []):
+            yield {
+                "type": "tool_use",
+                "id": tc.id,
+                "name": tc.name,
+                "arguments": tc.arguments,
+            }
+
 
 class EmbeddingProvider(ABC):
     """

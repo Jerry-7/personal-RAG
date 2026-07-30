@@ -7,9 +7,10 @@ LLM 自主决策何时调用工具、调用哪个工具、何时生成最终回�
 
 循环流程:
     while iteration < max_iterations:
-        1. LLM.chat_with_tools(messages, tools)
+        1. LLM.chat_with_tools_stream(messages, tools)
+           → 流式接收文本 token 和 tool_use 事件
         2. 如果有 tool_calls → 执行工具 → 结果加入消息 → 继续
-        3. 如果只有 content → 最终回答 → 退出循环
+        3. 如果只有文本 → 最终回答 → CitationParser 流式输出 → 退出
         4. 如果超过最大迭代 → 强制结束
 
 支持 SSE 流式事件输出，前端可实时查看 Agent 思考过程。
@@ -21,7 +22,7 @@ from typing import Any, Optional
 
 from app.agent.tools import tool_registry
 from app.config import settings
-from app.providers.base import AgentResponse, LLMProvider
+from app.providers.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ class AgentLoop:
         question: str,
         conversation_id: Optional[str] = None,
         chat_history: Optional[list[dict[str, str]]] = None,
-    ) -> AsyncGenerator[dict[str, Any], None]:
+    _cancellation_flags=None) -> AsyncGenerator[dict[str, Any], None]:
         """
         执行 Agent 主循环，yield SSE 事件。
 
@@ -121,6 +122,9 @@ class AgentLoop:
         messages.append({"role": "user", "content": question})
 
         # ── Agent 循环 ─────────────────────────────────────────
+        import asyncio
+        from app.services.citation import CitationParser
+
         iteration = 0
         force_answer_reason: str = ""  # 空字符串 = 未触发强制模式
 
@@ -136,45 +140,49 @@ class AgentLoop:
                     force_answer_reason = "cancelled"
                     break
 
-            # Step 1: LLM 决策
+            # Step 1: 检查工具可用性
             tools_schema = self.tools.to_openai_format()
             if not tools_schema:
-                # 没有工具可用，直接使用已有对话生成最终回答
                 logger.warning("No tools available, falling back to plain generation")
                 yield {"event": "tool_result",
                        "data": {"name": "_system", "result": "无可用工具，直接回答"}}
                 force_answer_reason = "no_tools"
                 break
 
+            # Step 2: 流式 LLM 决策
+            text_buffer = ""
+            tool_calls_in_turn: list[dict[str, Any]] = []
+
             try:
-                response: AgentResponse = await self.provider.chat_with_tools(
+                async for event in self.provider.chat_with_tools_stream(
                     messages=messages,
                     tools=tools_schema,
                     max_tokens=4096,
-                )
+                ):
+                    if event["type"] == "token":
+                        text_buffer += event["text"]
+                    elif event["type"] == "tool_use":
+                        tool_calls_in_turn.append(event)
             except Exception as e:
                 logger.exception("LLM call failed at iteration %d", iteration)
                 yield {"event": "error",
                        "data": {"message": f"LLM 调用失败: {str(e)}"}}
                 return  # 不可恢复，终止
 
-            # Step 2: 处理响应
-            if response.tool_calls:
+            # Step 3: 处理流式结果
+            if tool_calls_in_turn:
                 # LLM 选择调用工具
-                for tc in response.tool_calls:
-                    # 通知前端
+                for tc in tool_calls_in_turn:
                     yield {
                         "event": "tool_call",
-                        "data": {"name": tc.name, "arguments": tc.arguments},
+                        "data": {"name": tc["name"], "arguments": tc["arguments"]},
                     }
 
-                    # 执行工具
-                    result = await self.tools.execute(tc.name, tc.arguments)
+                    result = await self.tools.execute(tc["name"], tc["arguments"])
 
-                    # 通知前端结果
                     yield {
                         "event": "tool_result",
-                        "data": {"name": tc.name, "result": result},
+                        "data": {"name": tc["name"], "result": result},
                     }
 
                     # 将工具调用和结果加入消息历史
@@ -182,38 +190,30 @@ class AgentLoop:
                         "role": "assistant",
                         "content": None,
                         "tool_calls": [{
-                            "id": tc.id,
+                            "id": tc["id"],
                             "type": "function",
                             "function": {
-                                "name": tc.name,
-                                "arguments": tc.arguments,
+                                "name": tc["name"],
+                                "arguments": tc["arguments"],
                             },
                         }],
                     })
                     messages.append({
                         "role": "tool",
                         "content": result,
-                        "tool_call_id": tc.id,
+                        "tool_call_id": tc["id"],
                     })
 
-                # 继续循环，让 LLM 处理工具结果
-                continue
+                continue  # 继续循环，让 LLM 处理工具结果
 
-            elif response.content:
+            elif text_buffer:
                 # LLM 给出最终文本回答 — 用 CitationParser 解析后逐块流式输出
-                # 关键：不直接 yield 全部内容，而是模拟字符级流式，并重插 [N]
-                import asyncio
-                from app.services.citation import CitationParser
-
                 parser = CitationParser()
-                full_content = response.content
 
-                events = parser.feed(full_content) + parser.flush()
+                events = parser.feed(text_buffer) + parser.flush()
                 for evt in events:
                     if evt["type"] == "token":
                         text = evt["text"]
-                        # 按字符逐块 yield，模拟真实流式打字效果
-                        # 每个 yield 之间 await 让出事件循环，确保 SSE 逐帧推送
                         chunk_size = max(1, len(text) // 15) if len(text) > 30 else 1
                         for i in range(0, len(text), chunk_size):
                             chunk = text[i:i + chunk_size]
@@ -221,15 +221,13 @@ class AgentLoop:
                             await asyncio.sleep(0)
                     elif evt["type"] == "citation":
                         yield {"event": "citation", "data": {"index": evt["index"]}}
-                        # 重插 [N] 为 token，前端流式显示 + DB 保存的文本都包含引用标记
                         yield {"event": "token", "data": f"[{evt['index']}]"}
                         await asyncio.sleep(0)
 
                 return  # 生成完毕，交由 chat.py 发送 done
 
             else:
-                # 空响应（模型偶尔返回空消息，如 qwen2.5 某些情况下）
-                # 不直接报错，而是追加提示强制模型基于已有结果生成最终回答
+                # 空响应（模型偶尔返回空消息）
                 logger.warning(
                     "Empty LLM response at iteration %d, forcing final answer",
                     iteration,
@@ -284,8 +282,6 @@ class AgentLoop:
             )
 
         messages.append({"role": "system", "content": force_prompt})
-
-        from app.services.citation import CitationParser
 
         parser = CitationParser()
         async for token in self.provider.chat_stream(

@@ -185,3 +185,85 @@ class AnthropicLLMProvider(LLMProvider):
         if tool_calls:
             return AgentResponse(tool_calls=tool_calls)
         return AgentResponse(content="".join(text_parts))
+
+    async def chat_with_tools_stream(
+        self,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, Any]],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """
+        流式 tool calling。
+
+        使用 Anthropic Messages streaming API，监听
+        content_block_start / content_block_delta / content_block_stop
+        事件。文本增量实时推送，tool_use 的 input_json 逐块拼接。
+        """
+        import json as _json
+
+        # 提取 system 消息
+        system_msg = ""
+        chat_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_msg += msg["content"] + "\n"
+            else:
+                chat_messages.append(msg)
+
+        # 转换 tools 格式: OpenAI → Anthropic
+        anthropic_tools = []
+        for t in tools:
+            func = t.get("function", t)
+            anthropic_tools.append({
+                "name": func["name"],
+                "description": func.get("description", ""),
+                "input_schema": func.get(
+                    "parameters", {"type": "object", "properties": {}}
+                ),
+            })
+
+        tool_use_blocks: dict[int, dict[str, Any]] = {}
+        async with self._client.messages.stream(
+            model=model or self._default_model,
+            system=system_msg.strip() or None,
+            messages=chat_messages,  # type: ignore
+            tools=anthropic_tools,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        ) as stream:
+            async for event in stream:
+                if event.type == "content_block_start":
+                    block = event.content_block
+                    if block.type == "tool_use":
+                        tool_use_blocks[event.index] = {
+                            "id": block.id,
+                            "name": block.name,
+                            "partial_json": "",
+                        }
+
+                elif event.type == "content_block_delta":
+                    delta = event.delta
+                    if delta.type == "text_delta":
+                        yield {"type": "token", "text": delta.text}
+                    elif delta.type == "input_json_delta":
+                        if event.index in tool_use_blocks:
+                            tool_use_blocks[event.index][
+                                "partial_json"
+                            ] += delta.partial_json
+
+                elif event.type == "content_block_stop":
+                    if event.index in tool_use_blocks:
+                        block = tool_use_blocks.pop(event.index)
+                        raw = block["partial_json"].strip()
+                        try:
+                            args = _json.loads(raw) if raw else {}
+                        except _json.JSONDecodeError:
+                            args = {}
+                        yield {
+                            "type": "tool_use",
+                            "id": block["id"],
+                            "name": block["name"],
+                            "arguments": args,
+                        }
