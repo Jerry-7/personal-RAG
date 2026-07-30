@@ -122,6 +122,7 @@ class AgentLoop:
         messages.append({"role": "user", "content": question})
 
         # ── Agent 循环 ─────────────────────────────────────────
+        import asyncio
         from app.services.citation import CitationParser
 
         iteration = 0
@@ -148,9 +149,9 @@ class AgentLoop:
                 force_answer_reason = "no_tools"
                 break
 
-            # Step 2: 流式 LLM 决策 — 文本实时推送，tool_use 收集
+            # Step 2: 流式 LLM 决策 — 文本实时推送，tool_use 立即后台执行
             parser = CitationParser()
-            tool_calls_in_turn: list[dict[str, Any]] = []
+            tool_futures: list[tuple[dict[str, Any], asyncio.Task[str]]] = []
             has_any_output = False
 
             try:
@@ -161,7 +162,6 @@ class AgentLoop:
                 ):
                     if event["type"] == "token":
                         has_any_output = True
-                        # 实时解析引用标记并流式推送
                         for evt in parser.feed(event["text"]):
                             if evt["type"] == "token":
                                 yield {"event": "token", "data": evt["text"]}
@@ -169,49 +169,51 @@ class AgentLoop:
                                 yield {"event": "citation", "data": {"index": evt["index"]}}
                                 yield {"event": "token", "data": f"[{evt['index']}]"}
                     elif event["type"] == "tool_use":
-                        tool_calls_in_turn.append(event)
+                        # 立即通知前端 + 启动后台执行，不阻塞流
+                        yield {
+                            "event": "tool_call",
+                            "data": {"name": event["name"], "arguments": event["arguments"]},
+                        }
+                        task = asyncio.create_task(
+                            self.tools.execute(event["name"], event["arguments"])
+                        )
+                        tool_futures.append((event, task))
             except Exception as e:
                 logger.exception("LLM call failed at iteration %d", iteration)
+                for _, t in tool_futures:
+                    t.cancel()
                 yield {"event": "error",
                        "data": {"message": f"LLM 调用失败: {str(e)}"}}
                 return  # 不可恢复，终止
 
             # Step 3: 处理流式结果
-            if tool_calls_in_turn:
-                # LLM 选择调用工具 — 流中已推送的文本为思考过程
-                # 清空 parser 残留缓冲（思考文本中的半截 [N 不进入下一轮）
-                parser.reset()
+            if tool_futures:
+                # LLM 选择调用工具 — 等待已在后台执行的工具完成
+                parser.reset()  # 清空思考文本残留
 
-                for tc in tool_calls_in_turn:
-                    yield {
-                        "event": "tool_call",
-                        "data": {"name": tc["name"], "arguments": tc["arguments"]},
-                    }
-
-                    result = await self.tools.execute(tc["name"], tc["arguments"])
-
+                for tc_meta, task in tool_futures:
+                    result = await task  # 可能已提前完成，此时立即返回
                     yield {
                         "event": "tool_result",
-                        "data": {"name": tc["name"], "result": result},
+                        "data": {"name": tc_meta["name"], "result": result},
                     }
-
                     # 将工具调用和结果加入消息历史
                     messages.append({
                         "role": "assistant",
                         "content": None,
                         "tool_calls": [{
-                            "id": tc["id"],
+                            "id": tc_meta["id"],
                             "type": "function",
                             "function": {
-                                "name": tc["name"],
-                                "arguments": tc["arguments"],
+                                "name": tc_meta["name"],
+                                "arguments": tc_meta["arguments"],
                             },
                         }],
                     })
                     messages.append({
                         "role": "tool",
                         "content": result,
-                        "tool_call_id": tc["id"],
+                        "tool_call_id": tc_meta["id"],
                     })
 
                 continue  # 继续循环，让 LLM 处理工具结果
