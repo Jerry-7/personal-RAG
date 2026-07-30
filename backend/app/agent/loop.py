@@ -122,7 +122,6 @@ class AgentLoop:
         messages.append({"role": "user", "content": question})
 
         # ── Agent 循环 ─────────────────────────────────────────
-        import asyncio
         from app.services.citation import CitationParser
 
         iteration = 0
@@ -149,9 +148,10 @@ class AgentLoop:
                 force_answer_reason = "no_tools"
                 break
 
-            # Step 2: 流式 LLM 决策
-            text_buffer = ""
+            # Step 2: 流式 LLM 决策 — 文本实时推送，tool_use 收集
+            parser = CitationParser()
             tool_calls_in_turn: list[dict[str, Any]] = []
+            has_any_output = False
 
             try:
                 async for event in self.provider.chat_with_tools_stream(
@@ -160,7 +160,14 @@ class AgentLoop:
                     max_tokens=4096,
                 ):
                     if event["type"] == "token":
-                        text_buffer += event["text"]
+                        has_any_output = True
+                        # 实时解析引用标记并流式推送
+                        for evt in parser.feed(event["text"]):
+                            if evt["type"] == "token":
+                                yield {"event": "token", "data": evt["text"]}
+                            elif evt["type"] == "citation":
+                                yield {"event": "citation", "data": {"index": evt["index"]}}
+                                yield {"event": "token", "data": f"[{evt['index']}]"}
                     elif event["type"] == "tool_use":
                         tool_calls_in_turn.append(event)
             except Exception as e:
@@ -171,7 +178,10 @@ class AgentLoop:
 
             # Step 3: 处理流式结果
             if tool_calls_in_turn:
-                # LLM 选择调用工具
+                # LLM 选择调用工具 — 流中已推送的文本为思考过程
+                # 清空 parser 残留缓冲（思考文本中的半截 [N 不进入下一轮）
+                parser.reset()
+
                 for tc in tool_calls_in_turn:
                     yield {
                         "event": "tool_call",
@@ -206,41 +216,32 @@ class AgentLoop:
 
                 continue  # 继续循环，让 LLM 处理工具结果
 
-            elif text_buffer:
-                # LLM 给出最终文本回答 — 用 CitationParser 解析后逐块流式输出
-                parser = CitationParser()
+            # Step 4: 没有 tool_calls → 最终回答已实时推送，flush 残留
+            for evt in parser.flush():
+                if evt["type"] == "token":
+                    yield {"event": "token", "data": evt["text"]}
+                elif evt["type"] == "citation":
+                    yield {"event": "citation", "data": {"index": evt["index"]}}
+                    yield {"event": "token", "data": f"[{evt['index']}]"}
 
-                events = parser.feed(text_buffer) + parser.flush()
-                for evt in events:
-                    if evt["type"] == "token":
-                        text = evt["text"]
-                        chunk_size = max(1, len(text) // 15) if len(text) > 30 else 1
-                        for i in range(0, len(text), chunk_size):
-                            chunk = text[i:i + chunk_size]
-                            yield {"event": "token", "data": chunk}
-                            await asyncio.sleep(0)
-                    elif evt["type"] == "citation":
-                        yield {"event": "citation", "data": {"index": evt["index"]}}
-                        yield {"event": "token", "data": f"[{evt['index']}]"}
-                        await asyncio.sleep(0)
-
+            if has_any_output:
+                # 有内容产出 → 正常回答
                 return  # 生成完毕，交由 chat.py 发送 done
 
-            else:
-                # 空响应（模型偶尔返回空消息）
-                logger.warning(
-                    "Empty LLM response at iteration %d, forcing final answer",
-                    iteration,
-                )
-                yield {
-                    "event": "tool_result",
-                    "data": {
-                        "name": "_system",
-                        "result": "LLM 返回空响应，基于已收集的信息生成回答",
-                    },
-                }
-                force_answer_reason = "empty_response"
-                break
+            # 完全空响应（模型偶尔返回空消息）
+            logger.warning(
+                "Empty LLM response at iteration %d, forcing final answer",
+                iteration,
+            )
+            yield {
+                "event": "tool_result",
+                "data": {
+                    "name": "_system",
+                    "result": "LLM 返回空响应，基于已收集的信息生成回答",
+                },
+            }
+            force_answer_reason = "empty_response"
+            break
 
         # ── 强制生成最终回答 ─────────────────────────────────
         # 以下三种情况会到达此处:
