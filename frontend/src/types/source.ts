@@ -21,7 +21,24 @@ export interface SourceChunkInfo {
   chunk_index: number;
   start_timestamp?: number;
   end_timestamp?: number;
-  source_type: 'text' | 'video' | 'audio';
+  source_type: 'text' | 'video' | 'audio' | 'note';
+}
+
+export interface WebSourceResponse {
+  id: string;
+  url: string;
+  title: string;
+  content: string;
+  content_type: string;
+  fetched_at: string;
+  content_hash: string;
+}
+
+export interface NoteSourceResponse {
+  id: string;
+  title: string;
+  content_md: string;
+  updated_at: string;
 }
 
 /** 相邻分块（上下文） */

@@ -6,17 +6,21 @@
  */
 
 import { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { ExternalLink, X } from 'lucide-react';
 import { TextCitation } from './TextCitation';
 import { VideoCitation } from './VideoCitation';
 import { useSidebarStore } from '../../store/sidebarStore';
-import { getSourceChunk } from '../../api/sources';
-import type { SourceResponse } from '../../types/source';
+import { getNoteSource, getSourceChunk, getWebSnapshot } from '../../api/sources';
+import type { NoteSourceResponse, SourceResponse, WebSourceResponse } from '../../types/source';
 
 export function CitationSidebar() {
   const { isOpen, activeCitations, activeCitationIndex, closeSidebar, setLoading } =
     useSidebarStore();
   const [sources, setSources] = useState<Map<string, SourceResponse>>(new Map());
+  const [webSources, setWebSources] = useState<Map<string, WebSourceResponse>>(new Map());
+  const [noteSources, setNoteSources] = useState<Map<string, NoteSourceResponse>>(new Map());
 
   // 当前激活的引用
   const activeCitation = activeCitations.find((c) => c.index === activeCitationIndex);
@@ -24,6 +28,22 @@ export function CitationSidebar() {
   useEffect(() => {
     if (!activeCitation) return;
 
+    if (activeCitation.source_type === 'web' && activeCitation.snapshot_id) {
+      if (webSources.has(activeCitation.snapshot_id)) return;
+      setLoading(true);
+      getWebSnapshot(activeCitation.snapshot_id)
+        .then((data) => setWebSources((prev) => new Map(prev).set(activeCitation.snapshot_id!, data)))
+        .catch(console.error).finally(() => setLoading(false));
+      return;
+    }
+    if (activeCitation.source_type === 'note' && activeCitation.source_id) {
+      if (noteSources.has(activeCitation.source_id)) return;
+      setLoading(true);
+      getNoteSource(activeCitation.source_id)
+        .then((data) => setNoteSources((prev) => new Map(prev).set(activeCitation.source_id!, data)))
+        .catch(console.error).finally(() => setLoading(false));
+      return;
+    }
     const cacheKey = `${activeCitation.document_id}_${activeCitation.chunk_id}`;
     if (sources.has(cacheKey)) return;
 
@@ -34,7 +54,7 @@ export function CitationSidebar() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [activeCitation, sources, setLoading]);
+  }, [activeCitation, sources, webSources, noteSources, setLoading]);
 
   if (!isOpen) return null;
 
@@ -42,6 +62,8 @@ export function CitationSidebar() {
     ? `${activeCitation.document_id}_${activeCitation.chunk_id}`
     : null;
   const sourceData = cacheKey ? sources.get(cacheKey) : null;
+  const webData = activeCitation?.snapshot_id ? webSources.get(activeCitation.snapshot_id) : null;
+  const noteData = activeCitation?.source_id ? noteSources.get(activeCitation.source_id) : null;
 
   return (
     <div className="h-full flex flex-col">
@@ -79,9 +101,30 @@ export function CitationSidebar() {
 
       {/* 内容 */}
       <div className="flex-1 overflow-y-auto">
-        {!sourceData && (
+        {!sourceData && !webData && !noteData && (
           <div className="flex items-center justify-center h-32 text-sm text-gray-400">
             加载中...
+          </div>
+        )}
+
+        {webData && activeCitation && (
+          <div>
+            <div className="border-b border-gray-100 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
+              <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{webData.title}</p>
+              <a href={webData.url} target="_blank" rel="noreferrer" className="mt-1 flex items-center gap-1 break-all text-xs text-blue-600">{webData.url}<ExternalLink className="h-3 w-3 shrink-0" /></a>
+              <p className="mt-2 text-[10px] text-gray-500">抓取于 {new Date(webData.fetched_at).toLocaleString()} · {webData.content_hash.slice(0, 12)}</p>
+            </div>
+            <div className="whitespace-pre-wrap p-4 text-sm leading-6 text-gray-700 dark:text-gray-300">{webData.content}</div>
+          </div>
+        )}
+
+        {noteData && activeCitation && (
+          <div>
+            <div className="border-b border-gray-100 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
+              <p className="text-sm font-medium">{noteData.title}</p>
+              <p className="mt-1 text-[10px] text-gray-500">笔记 · 更新于 {new Date(noteData.updated_at).toLocaleString()}</p>
+            </div>
+            <div className="prose prose-sm max-w-none p-4 dark:prose-invert"><ReactMarkdown remarkPlugins={[remarkGfm]}>{noteData.content_md}</ReactMarkdown></div>
           </div>
         )}
 

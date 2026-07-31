@@ -27,7 +27,7 @@ export function CitationMark({ index, citation }: CitationMarkProps) {
       onClick={handleClick}
       disabled={!citation}
       className="inline-flex items-center justify-center w-5 h-5 mx-0.5 rounded-full bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 text-[10px] font-bold hover:bg-yellow-200 dark:hover:bg-yellow-800 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-default align-middle"
-      title={citation ? `来源: ${citation.filename}${citation.page_number ? ` 第${citation.page_number}页` : ''}` : undefined}
+      title={citation ? `来源: ${citation.title || citation.filename}${citation.page_number ? ` 第${citation.page_number}页` : ''}` : undefined}
     >
       {index}
     </button>

@@ -12,7 +12,13 @@ export interface CitationData {
   page_number?: number;
   start_timestamp?: number;
   end_timestamp?: number;
-  source_type: 'text' | 'video' | 'audio';
+  source_type: 'text' | 'video' | 'audio' | 'web' | 'note';
+  source_id?: string;
+  snapshot_id?: string;
+  url?: string;
+  title?: string;
+  fetched_at?: string;
+  content_hash?: string;
 }
 
 /** 单条消息 */
@@ -34,7 +40,10 @@ export type SSEEventType =
   | 'thinking'
   | 'tool_call'
   | 'tool_result'
-  | 'max_iterations';
+  | 'max_iterations'
+  | 'run_started'
+  | 'source'
+  | 'note_draft';
 
 /** SSE Token 事件 */
 export interface SSETokenEvent {
@@ -51,6 +60,7 @@ export interface SSEDoneEvent {
   citations: CitationData[];
   conversation_id: string;
   message_id: string;
+  run_id?: string;
 }
 
 /** SSE Tool Call 事件 (Agent 模式) */
@@ -73,4 +83,9 @@ export interface AgentStep {
   result?: string;
   message?: string;
   timestamp: number;
+  id?: string;
+  status?: 'running' | 'completed' | 'failed';
+  duration_ms?: number;
 }
+
+export type ChatMode = 'auto' | 'local' | 'web';

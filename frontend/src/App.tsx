@@ -6,29 +6,28 @@
 
 import { AppShell } from './components/layout/AppShell';
 import { ChatContainer } from './components/chat/ChatContainer';
-import { DocumentUploader } from './components/documents/DocumentUploader';
-import { DocumentList } from './components/documents/DocumentList';
 import { CitationSidebar } from './components/citations/CitationSidebar';
+import { KnowledgeSidebar } from './components/notes/KnowledgeSidebar';
+import { NoteEditor } from './components/notes/NoteEditor';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { useSettingsStore } from './store/settingsStore';
+import { useSidebarStore } from './store/sidebarStore';
 
 function App() {
   const isSettingsOpen = useSettingsStore((s) => s.isSettingsOpen);
+  const activeDraft = useSidebarStore((s) => s.activeDraft);
 
   return (
     <div className="h-screen flex flex-col bg-white dark:bg-gray-900">
       <AppShell>
         {/* 左侧导航 - 文档管理 */}
-        <div className="flex flex-col gap-4 p-4">
-          <DocumentUploader />
-          <DocumentList />
-        </div>
+        <KnowledgeSidebar />
 
         {/* 中心内容 - 聊天 */}
         <ChatContainer />
 
         {/* 右侧面板 - 引用来源 */}
-        <CitationSidebar />
+        {activeDraft ? <NoteEditor /> : <CitationSidebar />}
       </AppShell>
 
       {/* 设置弹窗 */}

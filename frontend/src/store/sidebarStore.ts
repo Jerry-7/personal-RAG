@@ -7,6 +7,7 @@
 
 import { create } from 'zustand';
 import type { CitationData } from '../types/chat';
+import type { NoteItem } from '../types/note';
 
 interface SidebarState {
   /** 侧边栏是否打开 */
@@ -17,12 +18,15 @@ interface SidebarState {
   activeCitationIndex: number | null;
   /** 是否正在加载来源数据 */
   isLoading: boolean;
+  activeDraft: NoteItem | null;
 
   // Actions
   openSource: (citation: CitationData) => void;
   setActiveCitation: (index: number) => void;
   closeSidebar: () => void;
   setLoading: (loading: boolean) => void;
+  openDraft: (note: NoteItem) => void;
+  updateDraft: (note: NoteItem) => void;
 }
 
 export const useSidebarStore = create<SidebarState>((set, get) => ({
@@ -30,11 +34,13 @@ export const useSidebarStore = create<SidebarState>((set, get) => ({
   activeCitations: [],
   activeCitationIndex: null,
   isLoading: false,
+  activeDraft: null,
 
   openSource: (citation) => {
     const state = get();
     // 避免重复添加同一引用
-    const existing = state.activeCitations.filter((c) => c.chunk_id === citation.chunk_id);
+    const sourceKey = citation.snapshot_id || citation.chunk_id || citation.source_id;
+    const existing = state.activeCitations.filter((c) => (c.snapshot_id || c.chunk_id || c.source_id) === sourceKey);
     const citations = existing.length > 0
       ? state.activeCitations
       : [...state.activeCitations, citation];
@@ -42,13 +48,16 @@ export const useSidebarStore = create<SidebarState>((set, get) => ({
       isOpen: true,
       activeCitations: citations,
       activeCitationIndex: citation.index,
+      activeDraft: null,
     });
   },
 
   setActiveCitation: (index) => set({ activeCitationIndex: index }),
 
   closeSidebar: () =>
-    set({ isOpen: false, activeCitations: [], activeCitationIndex: null }),
+    set({ isOpen: false, activeCitations: [], activeCitationIndex: null, activeDraft: null }),
 
   setLoading: (loading) => set({ isLoading: loading }),
+  openDraft: (note) => set({ isOpen: true, activeDraft: note, activeCitations: [], activeCitationIndex: null }),
+  updateDraft: (note) => set({ activeDraft: note }),
 }));

@@ -11,7 +11,7 @@ import { useSettingsStore } from '../../store/settingsStore';
 import { getSettings, updateSettings, getAvailableModels } from '../../api/settings';
 import type { AppSettings, AvailableModels } from '../../types/settings';
 
-type TabKey = 'llm' | 'embedding' | 'rag';
+type TabKey = 'llm' | 'embedding' | 'rag' | 'web';
 
 export function SettingsModal() {
   const { closeSettings } = useSettingsStore();
@@ -57,6 +57,7 @@ export function SettingsModal() {
     { key: 'llm', label: 'LLM 模型' },
     { key: 'embedding', label: 'Embedding' },
     { key: 'rag', label: 'RAG 参数' },
+    { key: 'web', label: '网页研究' },
   ];
 
   return (
@@ -249,6 +250,21 @@ export function SettingsModal() {
               </div>
             </>
           )}
+
+          {activeTab === 'web' && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">SearXNG URL</label>
+                <input value={settings.web.searxng_url} onChange={(e) => setSettings({ ...settings, web: { ...settings.web, searxng_url: e.target.value } })} className="w-full rounded-lg border px-3 py-2 text-sm bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <NumberSetting label="抓取超时（秒）" value={settings.web.fetch_timeout_secs} min={2} max={30} onChange={(value) => setSettings({ ...settings, web: { ...settings.web, fetch_timeout_secs: value } })} />
+                <NumberSetting label="页面预算" value={settings.web.page_budget} min={1} max={8} onChange={(value) => setSettings({ ...settings, web: { ...settings.web, page_budget: value } })} />
+                <NumberSetting label="安全搜索" value={settings.web.safe_search} min={0} max={2} onChange={(value) => setSettings({ ...settings, web: { ...settings.web, safe_search: value } })} />
+                <NumberSetting label="快照保留天数" value={settings.web.snapshot_retention_days} min={1} max={365} onChange={(value) => setSettings({ ...settings, web: { ...settings.web, snapshot_retention_days: value } })} />
+              </div>
+            </>
+          )}
         </div>
 
         {/* 底部按钮 */}
@@ -271,6 +287,10 @@ export function SettingsModal() {
       </div>
     </div>
   );
+}
+
+function NumberSetting({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void }) {
+  return <div><label className="block text-xs font-medium text-gray-500 mb-1">{label}</label><input type="number" value={value} min={min} max={max} onChange={(event) => onChange(Number(event.target.value))} className="w-full rounded-lg border px-3 py-2 text-sm bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600" /></div>;
 }
 
 /** API Key 输入组件 */

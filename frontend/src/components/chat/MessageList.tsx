@@ -9,6 +9,7 @@ import { useEffect, useRef } from 'react';
 import { MessageBubble } from './MessageBubble';
 import { StreamingText } from './StreamingText';
 import { useChatStore } from '../../store/chatStore';
+import { ActivityTimeline } from './ActivityTimeline';
 
 export function MessageList() {
   const messages = useChatStore((s) => s.messages);
@@ -32,6 +33,8 @@ export function MessageList() {
       {messages.map((msg) => (
         <MessageBubble key={msg.id} message={msg} />
       ))}
+
+      <ActivityTimeline />
 
       {/* 流式生成中的消息 */}
       {isStreaming && (

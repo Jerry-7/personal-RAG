@@ -5,7 +5,7 @@
  */
 
 import { create } from 'zustand';
-import type { CitationData, MessageItem } from '../types/chat';
+import type { AgentStep, CitationData, MessageItem } from '../types/chat';
 
 interface ChatState {
   /** 当前对话 ID */
@@ -20,6 +20,8 @@ interface ChatState {
   streamingCitations: CitationData[];
   /** 流式消息引用计数器（用于内联标记） */
   citationCounter: number;
+  runId: string | null;
+  agentSteps: AgentStep[];
 
   // Actions
   setConversationId: (id: string | null) => void;
@@ -30,6 +32,9 @@ interface ChatState {
   finishStreaming: (citations: CitationData[], messageId: string) => void;
   cancelStreaming: () => void;
   clearMessages: () => void;
+  setRunId: (id: string) => void;
+  addToolCall: (id: string, name: string, args: Record<string, unknown>) => void;
+  finishToolCall: (id: string, name: string, result: string, status: 'completed' | 'failed', durationMs?: number) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -39,6 +44,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingText: '',
   streamingCitations: [],
   citationCounter: 0,
+  runId: null,
+  agentSteps: [],
 
   setConversationId: (id) => set({ conversationId: id }),
 
@@ -54,7 +61,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   startStreaming: () =>
-    set({ isStreaming: true, streamingText: '', streamingCitations: [], citationCounter: 0 }),
+    set({ isStreaming: true, streamingText: '', streamingCitations: [], citationCounter: 0, agentSteps: [], runId: null }),
 
   appendToken: (text) =>
     set((s) => ({ streamingText: s.streamingText + text })),
@@ -84,5 +91,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   cancelStreaming: () =>
     set({ isStreaming: false, streamingText: '', streamingCitations: [] }),
 
-  clearMessages: () => set({ messages: [], conversationId: null }),
+  clearMessages: () => set({ messages: [], conversationId: null, agentSteps: [], runId: null }),
+  setRunId: (id) => set({ runId: id }),
+  addToolCall: (id, name, args) => set((state) => ({
+    agentSteps: [...state.agentSteps, { id, type: 'tool_call', name, arguments: args, status: 'running', timestamp: Date.now() }],
+  })),
+  finishToolCall: (id, name, result, status, durationMs) => set((state) => ({
+    agentSteps: state.agentSteps.map((step) =>
+      (id && step.id === id) || (!id && step.name === name && step.status === 'running')
+        ? { ...step, result, status, duration_ms: durationMs }
+        : step
+    ),
+  })),
 }));

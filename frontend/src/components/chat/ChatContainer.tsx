@@ -18,9 +18,9 @@ export function ChatContainer() {
         /* 空状态引导 */
         <div className="flex-1 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500">
           <MessageSquare className="w-16 h-16 mb-4" />
-          <p className="text-lg font-medium">上传文档开始对话</p>
+          <p className="text-lg font-medium">开始你的研究</p>
           <p className="text-sm mt-2">
-            支持 PDF、Word、TXT、视频等多种格式
+            可以使用本地文档、笔记或网页来源
           </p>
         </div>
       ) : (

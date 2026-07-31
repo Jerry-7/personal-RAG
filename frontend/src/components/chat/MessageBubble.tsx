@@ -5,11 +5,16 @@
  * AI 消息中的 [N] 引用标记渲染为可点击的 CitationMark。
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { NotebookPen } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CitationMark } from './CitationMark';
 import type { MessageItem } from '../../types/chat';
+import { draftFromConversation } from '../../api/notes';
+import { useChatStore } from '../../store/chatStore';
+import { useSidebarStore } from '../../store/sidebarStore';
+import { useNoteStore } from '../../store/noteStore';
 
 interface MessageBubbleProps {
   message: MessageItem;
@@ -17,6 +22,8 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const [drafting, setDrafting] = useState(false);
+  const conversationId = useChatStore((state) => state.conversationId);
 
   // 将 AI 回复中的 [N] 替换为 CitationMark 占位符
   const { parts, hasCitations } = useMemo(() => {
@@ -54,8 +61,9 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       </div>
 
       {/* 内容 */}
+      <div className="max-w-[80%]">
       <div
-        className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+        className={`rounded-lg px-4 py-3 ${
           isUser
             ? 'bg-blue-500 text-white'
             : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
@@ -91,6 +99,18 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
           </div>
         )}
+      </div>
+      {!isUser && conversationId && (
+        <button disabled={drafting} onClick={() => {
+          setDrafting(true);
+          void draftFromConversation(conversationId).then((note) => {
+            useNoteStore.getState().upsertNote(note);
+            useSidebarStore.getState().openDraft(note);
+          }).finally(() => setDrafting(false));
+        }} className="mt-1 flex items-center gap-1 text-[11px] text-gray-500 hover:text-blue-600">
+          <NotebookPen className="h-3.5 w-3.5" />{drafting ? '整理中' : '整理成笔记'}
+        </button>
+      )}
       </div>
     </div>
   );

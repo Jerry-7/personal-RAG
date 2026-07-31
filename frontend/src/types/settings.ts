@@ -26,6 +26,15 @@ export interface RAGConfig {
   final_top_k: number;
 }
 
+export interface WebResearchConfig {
+  searxng_url: string;
+  language: string;
+  safe_search: number;
+  fetch_timeout_secs: number;
+  page_budget: number;
+  snapshot_retention_days: number;
+}
+
 export interface AppSettings {
   llm_provider: string;
   embedding_provider: string;
@@ -33,6 +42,7 @@ export interface AppSettings {
   openai: OpenAIConfig;
   anthropic: AnthropicConfig;
   rag: RAGConfig;
+  web: WebResearchConfig;
 }
 
 export interface AvailableModels {
