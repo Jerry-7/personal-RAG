@@ -51,6 +51,11 @@ class Generator:
         self.provider_name = provider_name or settings.llm_provider
         self._provider: Optional[LLMProvider] = None
 
+    def reset(self, provider_name: Optional[str] = None) -> None:
+        """Invalidate the cached provider after runtime settings change."""
+        self.provider_name = provider_name or settings.llm_provider
+        self._provider = None
+
     async def _get_provider(self) -> LLMProvider:
         """
         获取或创建 LLM provider 实例。

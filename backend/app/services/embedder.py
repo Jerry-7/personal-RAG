@@ -42,6 +42,17 @@ class EmbeddingService:
         self.batch_size = batch_size
         self._provider: Optional[EmbeddingProvider] = None
 
+    def reset(self, provider_name: Optional[str] = None) -> None:
+        """Invalidate the cached provider after runtime settings change."""
+        self.provider_name = provider_name or settings.embedding_provider
+        self._provider = None
+
+    @property
+    def model_name(self) -> str:
+        if self.provider_name == "openai":
+            return settings.openai_embedding_model
+        return settings.ollama_embedding_model
+
     async def _get_provider(self) -> EmbeddingProvider:
         """
         获取或创建 Embedding provider 实例（延迟初始化）。

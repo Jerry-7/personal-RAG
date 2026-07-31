@@ -8,12 +8,18 @@
 
 import json
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.config import settings as app_settings
 from app.db.database import get_db
 from app.db.models import Setting
+from app.db.vector_store import vector_store
+from app.services.runtime_settings import (
+    apply_runtime_settings,
+    embedding_signature,
+    flatten_updates,
+)
 
 router = APIRouter()
 
@@ -72,21 +78,22 @@ async def update_settings(updates: dict, db: Session = Depends(get_db)):
     Returns:
         更新确认
     """
-    for key, value in updates.items():
-        if isinstance(value, dict):
-            for sub_key, sub_value in value.items():
-                composite_key = f"{key}_{sub_key}"
-                _upsert_setting(db, composite_key, sub_value)
-        else:
-            _upsert_setting(db, key, value)
+    flattened = flatten_updates(updates)
+    if (
+        vector_store.count() > 0
+        and embedding_signature(flattened) != embedding_signature()
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="已有索引时不能直接切换 Embedding provider 或模型，请先删除现有索引文档",
+        )
+
+    for key, value in flattened.items():
+        _upsert_setting(db, key, value)
 
     db.commit()
 
-    # 刷新全局 settings 对象中的部分值
-    if "llm_provider" in updates:
-        app_settings.llm_provider = updates["llm_provider"]
-    if "embedding_provider" in updates:
-        app_settings.embedding_provider = updates["embedding_provider"]
+    apply_runtime_settings(flattened)
 
     return {"status": "updated"}
 
