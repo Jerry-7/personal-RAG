@@ -108,6 +108,7 @@ class Retriever:
 
             retrieved.append({
                 "chunk_id": chunk_id,
+                "source_id": chunk_record.source_id or chunk_record.document_id,
                 "document_id": chunk_record.document_id,
                 "text": chunk_record.text,
                 "filename": "",  # 从 document 表填充
@@ -118,14 +119,20 @@ class Retriever:
                 "score": round(score_normalized, 4),
             })
 
-        # 填充文件名
+        # Fill display names for both legacy documents and indexed notes.
         if retrieved:
-            from app.db.models import Document
+            from app.db.models import Document, KnowledgeSource
             doc_ids = list({r["document_id"] for r in retrieved if r["document_id"]})
             docs = db.query(Document).filter(Document.id.in_(doc_ids)).all()
             doc_name_map = {d.id: d.original_name for d in docs}
+            source_ids = list({r["source_id"] for r in retrieved if r["source_id"]})
+            sources = db.query(KnowledgeSource).filter(KnowledgeSource.id.in_(source_ids)).all()
+            source_map = {source.id: source for source in sources}
             for r in retrieved:
-                r["filename"] = doc_name_map.get(r["document_id"], "")
+                source = source_map.get(r["source_id"])
+                r["filename"] = doc_name_map.get(r["document_id"], source.title if source else "")
+                if source and source.kind == "note":
+                    r["source_type"] = "note"
 
         # 按相似度排序
         retrieved.sort(key=lambda x: x["score"], reverse=True)

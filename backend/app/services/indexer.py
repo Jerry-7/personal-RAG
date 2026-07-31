@@ -71,7 +71,7 @@ class IndexingPipeline:
             ValueError: 文件类型不受支持
             RuntimeError: 索引过程中发生错误
         """
-        from app.db.models import Document, Chunk
+        from app.db.models import Document, Chunk, KnowledgeSource
 
         # ── Step 1: 解析（线程池执行，避免 CPU 密集型 OCR 阻塞事件循环）──
         await self._notify(progress_callback, "parsing", "正在解析文件...")
@@ -113,6 +113,7 @@ class IndexingPipeline:
 
         # ── Step 4: 准备 SQLite 记录 ─────────────────────────
         await self._notify(progress_callback, "storing", "正在存储向量...")
+        # 将旧chunks映射删除
         previous_chunk_ids = [
             row[0]
             for row in db.query(Chunk.id).filter(Chunk.document_id == doc_id).all()
@@ -143,6 +144,7 @@ class IndexingPipeline:
             chunk_record = Chunk(
                 id=chunk_ids[i],
                 document_id=doc_id,
+                source_id=doc_record.source_id if doc_record else doc_id,
                 chunk_index=ch["chunk_index"],
                 text=ch["text"],
                 page_number=ch["metadata"].get("page_number"),
@@ -158,6 +160,11 @@ class IndexingPipeline:
             doc_record.status = "indexed"
             doc_record.chunk_count = len(chunks)
             doc_record.updated_at = __import__("datetime").datetime.now()
+            source = db.query(KnowledgeSource).filter(
+                KnowledgeSource.id == doc_record.source_id
+            ).first()
+            if source:
+                source.index_status = "indexed"
         try:
             db.flush()
             self._vector_store.add_chunks(
@@ -212,7 +219,13 @@ class IndexingPipeline:
 
         # 清理 SQLite 记录（CASCADE 自动清理 chunks 和 messages 引用）
         db.query(Chunk).filter(Chunk.document_id == doc_id).delete()
+        source = None
+        if doc.source_id:
+            from app.db.models import KnowledgeSource
+            source = db.query(KnowledgeSource).filter(KnowledgeSource.id == doc.source_id).first()
         db.delete(doc)
+        if source:
+            db.delete(source)
         db.commit()
 
         # 清理磁盘文件（如果存在）

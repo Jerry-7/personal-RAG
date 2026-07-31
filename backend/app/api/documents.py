@@ -31,6 +31,7 @@ from app.schemas.document import (
 from app.services.event_bus import event_bus
 from app.services.indexer import indexing_pipeline
 from app.services.indexing_worker import ensure_index_job, run_indexing
+from app.services.knowledge_sources import ensure_document_source
 from app.services.parser.registry import parser_registry
 from app.services.task_manager import task_manager
 from app.utils.file_utils import get_safe_filename
@@ -130,8 +131,11 @@ async def upload_document(
     else:
         # 创建文档记录（indexer 不再负责创建）
         doc_id = str(uuid.uuid4())
+        from app.db.models import KnowledgeSource
+        db.add(KnowledgeSource(id=doc_id, kind="document", title=file.filename))
         doc = Document(
             id=doc_id,
+            source_id=doc_id,
             filename=safe_name,
             original_name=file.filename,
             file_type=ext,
@@ -141,6 +145,10 @@ async def upload_document(
             status="uploaded",
         )
         db.add(doc)
+        db.commit()
+
+    if existing:
+        ensure_document_source(db, existing)
         db.commit()
 
     # ── 提交后台索引任务 ─────────────────────────────────────

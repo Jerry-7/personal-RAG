@@ -9,7 +9,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -36,6 +36,10 @@ class Document(Base):
 
     # ── 主键 & 文件标识 ──────────────────────────────────────
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    source_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("knowledge_sources.id", ondelete="CASCADE"),
+        unique=True, nullable=False, index=True,
+    )
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
     original_name: Mapped[str] = mapped_column(String(512), nullable=False)
     file_type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
@@ -84,8 +88,11 @@ class Chunk(Base):
 
     # ── 主键 & 关联 ──────────────────────────────────────────
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
-    document_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    document_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("documents.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    source_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("knowledge_sources.id", ondelete="CASCADE"), nullable=False, index=True
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
 
@@ -188,8 +195,12 @@ class IndexJob(Base):
     __tablename__ = "index_jobs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
-    document_id: Mapped[str] = mapped_column(
+    document_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("documents.id", ondelete="CASCADE"),
+        unique=True, nullable=True, index=True,
+    )
+    source_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("knowledge_sources.id", ondelete="CASCADE"),
         unique=True, nullable=False, index=True,
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued", index=True)
@@ -200,3 +211,179 @@ class IndexJob(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow, server_default=func.now()
     )
+
+
+class KnowledgeSource(Base):
+    """Common indexable source shared by documents and notes."""
+
+    __tablename__ = "knowledge_sources"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", index=True)
+    index_status: Mapped[str] = mapped_column(String(20), nullable=False, default="not_indexed", index=True)
+    content_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, server_default=func.now()
+    )
+
+
+class AgentRun(Base):
+    __tablename__ = "agent_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    conversation_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    assistant_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False, default="auto")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="running", index=True)
+    web_page_budget: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
+    web_pages_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_depth: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ToolExecution(Base):
+    __tablename__ = "tool_executions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    run_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    iteration: Mapped[int] = mapped_column(Integer, nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    arguments_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    result_preview: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, server_default=func.now())
+
+
+class WebSnapshot(Base):
+    __tablename__ = "web_snapshots"
+    __table_args__ = (UniqueConstraint("canonical_url", "content_hash", name="uq_web_snapshot_version"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    canonical_url: Mapped[str] = mapped_column(String(2048), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    content_type: Mapped[str] = mapped_column(String(128), nullable=False, default="text/html")
+    http_status: Mapped[int] = mapped_column(Integer, nullable=False, default=200)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, server_default=func.now())
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class ResearchRunSnapshot(Base):
+    __tablename__ = "research_run_snapshots"
+    __table_args__ = (UniqueConstraint("run_id", "snapshot_id", name="uq_run_snapshot"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    run_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    snapshot_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("web_snapshots.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    depth: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, server_default=func.now())
+
+
+class ConversationSummary(Base):
+    __tablename__ = "conversation_summaries"
+
+    conversation_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True
+    )
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    through_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class Note(Base):
+    __tablename__ = "notes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    source_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("knowledge_sources.id", ondelete="CASCADE"), unique=True, nullable=True
+    )
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    content_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    suggested_tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft", index=True)
+    index_status: Mapped[str] = mapped_column(String(20), nullable=False, default="not_indexed", index=True)
+    conversation_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source_message_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, server_default=func.now()
+    )
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class Collection(Base):
+    __tablename__ = "collections"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class NoteTag(Base):
+    __tablename__ = "note_tags"
+    note_id: Mapped[str] = mapped_column(String(36), ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True)
+    tag_id: Mapped[str] = mapped_column(String(36), ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
+
+
+class NoteCollection(Base):
+    __tablename__ = "note_collections"
+    note_id: Mapped[str] = mapped_column(String(36), ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True)
+    collection_id: Mapped[str] = mapped_column(String(36), ForeignKey("collections.id", ondelete="CASCADE"), primary_key=True)
+
+
+class DocumentTag(Base):
+    __tablename__ = "document_tags"
+    document_id: Mapped[str] = mapped_column(String(36), ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True)
+    tag_id: Mapped[str] = mapped_column(String(36), ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
+
+
+class DocumentCollection(Base):
+    __tablename__ = "document_collections"
+    document_id: Mapped[str] = mapped_column(String(36), ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True)
+    collection_id: Mapped[str] = mapped_column(String(36), ForeignKey("collections.id", ondelete="CASCADE"), primary_key=True)
+
+
+class NoteSource(Base):
+    __tablename__ = "note_sources"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    note_id: Mapped[str] = mapped_column(String(36), ForeignKey("notes.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    chunk_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("chunks.id", ondelete="SET NULL"), nullable=True)
+    snapshot_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("web_snapshots.id", ondelete="SET NULL"), nullable=True)
+    message_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
+    citation_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)

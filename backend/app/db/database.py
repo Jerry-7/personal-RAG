@@ -60,6 +60,7 @@ def init_db() -> None:
 
     应在应用启动时调用。如果表已存在则跳过（不重复创建）。
     """
+    from app.db import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
     # FTS5 supplies local keyword recall for hybrid retrieval. Triggers keep the
     # external-content index synchronized with the chunks table.
@@ -89,6 +90,16 @@ def init_db() -> None:
             # Some SQLite builds omit FTS5. Retrieval detects this and falls
             # back to vector-only search.
             pass
+
+
+def run_migrations() -> None:
+    """Upgrade the local SQLite schema to the latest Alembic revision."""
+    from alembic import command
+    from alembic.config import Config
+
+    config_path = Path(__file__).parent.parent.parent / "alembic.ini"
+    alembic_config = Config(str(config_path))
+    command.upgrade(alembic_config, "head")
 
 
 def get_db() -> Session:

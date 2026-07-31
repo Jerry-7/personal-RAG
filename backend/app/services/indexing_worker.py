@@ -20,6 +20,7 @@ from app.config import settings
 from app.db.models import Document, IndexJob
 from app.services.event_bus import event_bus
 from app.services.indexer import indexing_pipeline
+from app.services.knowledge_sources import ensure_document_source
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +41,21 @@ def index_config_snapshot() -> str:
 
 
 def ensure_index_job(db, doc_id: str) -> IndexJob:
+    document = db.query(Document).filter(Document.id == doc_id).first()
+    source_id = None
+    if document:
+        source_id = ensure_document_source(db, document).id
     job = db.query(IndexJob).filter(IndexJob.document_id == doc_id).first()
     if job is None:
-        job = IndexJob(document_id=doc_id, status="queued", config_json=index_config_snapshot())
+        job = IndexJob(
+            document_id=doc_id,
+            source_id=source_id,
+            status="queued",
+            config_json=index_config_snapshot(),
+        )
         db.add(job)
     else:
+        job.source_id = source_id
         job.status = "queued"
         job.config_json = index_config_snapshot()
         job.error_message = None
