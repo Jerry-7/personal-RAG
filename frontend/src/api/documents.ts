@@ -8,6 +8,7 @@ import type {
   UploadResponse,
   ProgressCallbacks,
 } from '../types/document';
+import { streamSSE } from './sse';
 
 /** 上传文件（立即返回，后台异步索引） */
 export async function uploadDocument(file: File): Promise<UploadResponse> {
@@ -39,70 +40,22 @@ export function streamDocumentProgress(
   docId: string,
   callbacks: ProgressCallbacks
 ): AbortController {
-  const controller = new AbortController();
-
-  fetch(`/api/documents/${docId}/progress`, { signal: controller.signal })
-    .then(async (response) => {
-      if (!response.ok) {
-        callbacks.onError({ doc_id: docId, status: 'error', message: `HTTP ${response.status}` });
-        return;
-      }
-      if (!response.body) {
-        callbacks.onError({ doc_id: docId, status: 'error', message: '响应体为空' });
-        return;
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          let eventType = '';
-          for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              eventType = line.slice(7).trim();
-            } else if (line.startsWith('data: ')) {
-              const dataStr = line.slice(6);
-              try {
-                const data = JSON.parse(dataStr);
-                switch (eventType) {
+  return streamSSE(`/api/documents/${docId}/progress`, {
+    onMessage: ({ event, data }) => {
+      switch (event) {
                   case 'progress':
-                    callbacks.onProgress(data);
+                    callbacks.onProgress(data as Parameters<typeof callbacks.onProgress>[0]);
                     break;
                   case 'done':
-                    callbacks.onDone(data);
+                    callbacks.onDone(data as Parameters<typeof callbacks.onDone>[0]);
                     break;
                   case 'error':
-                    callbacks.onError(data);
+                    callbacks.onError(data as Parameters<typeof callbacks.onError>[0]);
                     break;
-                }
-              } catch {
-                // 跳过 JSON 解析失败的行
-              }
-            }
-          }
-        }
-      } catch (err: unknown) {
-        if (err instanceof Error && err.name !== 'AbortError') {
-          callbacks.onError({ doc_id: docId, status: 'error', message: err.message });
-        }
       }
-    })
-    .catch((err) => {
-      if (err.name !== 'AbortError') {
-        callbacks.onError({ doc_id: docId, status: 'error', message: err.message });
-      }
-    });
-
-  return controller;
+    },
+    onError: (error) => callbacks.onError({ doc_id: docId, status: 'error', message: error.message }),
+  });
 }
 
 /** 删除文档 */

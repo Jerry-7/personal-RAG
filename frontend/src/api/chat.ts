@@ -7,6 +7,7 @@
  */
 
 import type { SSEDoneEvent } from '../types/chat';
+import { streamSSE } from './sse';
 
 /** Agent 工具调用步骤（前端展示用） */
 export interface AgentStep {
@@ -44,86 +45,39 @@ export function streamChatQuery(
   conversationId: string | null,
   callbacks: ChatStreamCallbacks
 ): AbortController {
-  const controller = new AbortController();
-
-  fetch('/api/chat/query', {
+  return streamSSE('/api/chat/query', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ question, conversation_id: conversationId }),
-    signal: controller.signal,
-  }).then(async (response) => {
-    if (!response.ok) {
-      callbacks.onError(`HTTP ${response.status}: ${response.statusText}`);
-      return;
-    }
-    if (!response.body) {
-      callbacks.onError('响应体为空');
-      return;
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        let eventType = '';
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith('data: ')) {
-            const dataStr = line.slice(6);
-            try {
-              const data = JSON.parse(dataStr);
-              switch (eventType) {
+    onMessage: ({ event, data: rawData }) => {
+      const data = rawData as Record<string, unknown>;
+      switch (event) {
                 case 'token':
-                  callbacks.onToken(data.text || '');
+                  callbacks.onToken(String(data.text || ''));
                   break;
                 case 'citation':
-                  callbacks.onCitation(data.index);
+                  callbacks.onCitation(Number(data.index));
                   break;
                 case 'done':
-                  callbacks.onDone(data as SSEDoneEvent);
+                  callbacks.onDone(data as unknown as SSEDoneEvent);
                   break;
                 case 'error':
-                  callbacks.onError(data.message || '未知错误');
+                  callbacks.onError(String(data.message || '未知错误'));
                   break;
                 // ── Agent 模式事件 ──────────────────────────
                 case 'tool_call':
-                  callbacks.onToolCall?.(data.name, data.arguments);
+                  callbacks.onToolCall?.(String(data.name), data.arguments as Record<string, unknown>);
                   break;
                 case 'tool_result':
-                  callbacks.onToolResult?.(data.name, data.result);
+                  callbacks.onToolResult?.(String(data.name), String(data.result));
                   break;
                 case 'max_iterations':
-                  callbacks.onMaxIterations?.(data.message || '达到最大搜索次数');
+                  callbacks.onMaxIterations?.(String(data.message || '达到最大搜索次数'));
                   break;
-              }
-            } catch {
-              // 跳过 JSON 解析失败的行
-            }
-          }
-        }
       }
-    } catch (err: unknown) {
-      if (err instanceof Error && err.name !== 'AbortError') {
-        callbacks.onError(err.message);
-      }
-    }
-  }).catch((err) => {
-    if (err.name !== 'AbortError') {
-      callbacks.onError(err.message);
-    }
+    },
+    onError: (error) => callbacks.onError(error.message),
   });
-
-  return controller;
 }
 
 /** 取消对话生成 */

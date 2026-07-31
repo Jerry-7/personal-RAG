@@ -70,6 +70,7 @@ export function DocumentList() {
   };
 
   useEffect(() => {
+    const streams = activeStreams.current;
     const fetchDocs = async () => {
       setLoading(true);
       try {
@@ -87,8 +88,8 @@ export function DocumentList() {
 
     // 清理：组件卸载时断开所有 SSE
     return () => {
-      activeStreams.current.forEach((ctrl) => ctrl.abort());
-      activeStreams.current.clear();
+      streams.forEach((ctrl) => ctrl.abort());
+      streams.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setDocuments, setLoading]);
