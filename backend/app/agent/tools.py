@@ -30,7 +30,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 # 工具执行返回值的最大字符数（超出截断）
-MAX_TOOL_RESULT_LENGTH = 3000
+MAX_TOOL_RESULT_LENGTH = 30000
 
 
 class ToolDef:
@@ -152,7 +152,13 @@ class ToolRegistry:
 
     # ── 执行 ──────────────────────────────────────────────────
 
-    async def execute(self, name: str, arguments: dict[str, Any]) -> str:
+    async def execute(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        context: Any | None = None,
+    ) -> str:
         """
         执行指定工具并返回结果字符串。
 
@@ -172,7 +178,10 @@ class ToolRegistry:
             raise ValueError(f"工具不存在: {name}")
 
         try:
-            result = await tool.handler(**arguments)
+            call_arguments = dict(arguments)
+            if "context" in inspect.signature(tool.handler).parameters:
+                call_arguments["context"] = context
+            result = await tool.handler(**call_arguments)
             result_str = str(result)
             # 截断过长结果，避免撑爆 context
             if len(result_str) > MAX_TOOL_RESULT_LENGTH:
@@ -211,7 +220,7 @@ def _func_to_parameters(func: Callable) -> dict[str, Any]:
     }
 
     for param_name, param in sig.parameters.items():
-        if param_name in ("self", "cls"):
+        if param_name in ("self", "cls", "context"):
             continue
 
         annotation = param.annotation
@@ -222,6 +231,8 @@ def _func_to_parameters(func: Callable) -> dict[str, Any]:
         prop = {"type": json_type}
 
         # 从 docstring 提取参数描述（如果有的话）
+
+        # 判断该参数是否是必传
         if param.default is not inspect.Parameter.empty:
             prop["default"] = param.default
         else:

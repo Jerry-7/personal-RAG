@@ -3,7 +3,7 @@
 内置工具模块
 
 将现有 RAG 检索服务包装为 Agent 可调用的工具。
-使用 contextvars 获取当前请求的数据库会话。
+内置工具通过显式的 AgentRunContext 获取请求级状态。
 
 注册的工具：
 - search_knowledge_base: 在已上传文档中搜索
@@ -17,69 +17,29 @@
 """
 
 import logging
-from contextvars import ContextVar
-from typing import Any, Optional
+from typing import Any
 
-from sqlalchemy.orm import Session
-
+from app.agent.context import AgentRunContext
 from app.agent.tools import tool_registry
 from app.services.retriever import retriever
 
 logger = logging.getLogger(__name__)
 
-# 当前请求的数据库会话（由 AgentLoop 设置）
-_current_db: ContextVar[Optional[Session]] = ContextVar("agent_db", default=None)
-
-# Agent 引用注册表：记录跨工具调用的所有检索结果
-# 格式: [(citation_index, {chunk_metadata}), ...]
-# citation_index 从 1 开始全局递增
-_agent_citations: ContextVar[Optional[list[dict[str, Any]]]] = ContextVar(
-    "agent_citations", default=None
-)
-_agent_citation_counter: ContextVar[int] = ContextVar(
-    "agent_citation_counter", default=0
-)
-
-
-def set_db_context(db: Session) -> None:
-    """设置当前请求的数据库会话上下文。"""
-    _current_db.set(db)
-
-
-def _get_db() -> Session:
-    """获取当前请求的数据库会话。"""
-    db = _current_db.get()
-    if db is None:
-        raise RuntimeError("数据库会话未设置，请先调用 set_db_context()")
-    return db
-
-
-def reset_citation_registry() -> None:
-    """重置引用注册表（每个新请求开始时调用）。"""
-    _agent_citations.set([])
-    _agent_citation_counter.set(0)
-
-
-def get_citation_registry() -> list[dict[str, Any]]:
-    """获取当前请求的引用注册表。"""
-    return _agent_citations.get() or []
-
-
-def _register_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _register_chunks(
+    context: AgentRunContext,
+    chunks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """
     将检索到的 chunks 注册到全局引用表，分配唯一编号。
 
     Returns:
         带 citation_index 的 chunk 列表
     """
-    citations = _agent_citations.get() or []
-    counter = _agent_citation_counter.get() or 0
-
     registered = []
     for chunk in chunks:
-        counter += 1
-        citations.append({
-            "index": counter,
+        context.citation_counter += 1
+        context.citations.append({
+            "index": context.citation_counter,
             "document_id": chunk.get("document_id", ""),
             "chunk_id": chunk.get("chunk_id", ""),
             "snippet": chunk.get("text", "")[:200],
@@ -89,14 +49,16 @@ def _register_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "end_timestamp": chunk.get("end_timestamp"),
             "source_type": chunk.get("source_type", "text"),
         })
-        registered.append({**chunk, "_citation_index": counter})
-
-    _agent_citations.set(citations)
-    _agent_citation_counter.set(counter)
+        registered.append({**chunk, "_citation_index": context.citation_counter})
     return registered
 
 
-async def _search_knowledge_base(query: str, top_k: int = 4) -> str:
+async def _search_knowledge_base(
+    query: str,
+    top_k: int = 4,
+    *,
+    context: AgentRunContext,
+) -> str:
     """
     在已上传文档中搜索相关内容。
 
@@ -108,14 +70,13 @@ async def _search_knowledge_base(query: str, top_k: int = 4) -> str:
         query: 搜索关键词或问题
         top_k: 返回结果数量，默认 4
     """
-    db = _get_db()
-    chunks = await retriever.retrieve(query, db, top_k=top_k)
+    chunks = await retriever.retrieve(query, context.db, top_k=top_k)
 
     if not chunks:
         return "未找到相关文档。请尝试不同的搜索关键词。"
 
     # 注册到全局引用表，分配唯一编号
-    registered = _register_chunks(chunks)
+    registered = _register_chunks(context, chunks)
 
     # 格式化为 LLM 易读的格式，使用全局引用编号
     parts = []
@@ -136,7 +97,7 @@ async def _search_knowledge_base(query: str, top_k: int = 4) -> str:
     return "\n\n".join(parts)
 
 
-async def _list_documents() -> str:
+async def _list_documents(*, context: AgentRunContext) -> str:
     """
     列出所有已上传且已索引的文档。
 
@@ -144,9 +105,8 @@ async def _list_documents() -> str:
     """
     from app.db.models import Document
 
-    db = _get_db()
     docs = (
-        db.query(Document)
+        context.db.query(Document)
         .filter(Document.status == "indexed")
         .order_by(Document.updated_at.desc())
         .all()
@@ -171,7 +131,7 @@ async def _list_documents() -> str:
     return "\n".join(lines)
 
 
-async def _read_chunk(chunk_id: str) -> str:
+async def _read_chunk(chunk_id: str, *, context: AgentRunContext) -> str:
     """
     读取指定分块的完整文本内容。
 
@@ -182,15 +142,14 @@ async def _read_chunk(chunk_id: str) -> str:
     """
     from app.db.models import Chunk
 
-    db = _get_db()
-    chunk = db.query(Chunk).filter(Chunk.id == chunk_id).first()
+    chunk = context.db.query(Chunk).filter(Chunk.id == chunk_id).first()
 
     if not chunk:
         return f"未找到分块: {chunk_id}"
 
     # 获取文档信息
     from app.db.models import Document
-    doc = db.query(Document).filter(Document.id == chunk.document_id).first()
+    doc = context.db.query(Document).filter(Document.id == chunk.document_id).first()
     doc_name = doc.original_name if doc else "未知文档"
 
     parts = [f"文档: {doc_name}"]

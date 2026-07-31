@@ -85,13 +85,22 @@ async def chat_query(
         conv = None
     # 创建新对话
     if not conv:
+        llm_model = {
+            "openai": settings.openai_llm_model,
+            "anthropic": settings.anthropic_llm_model,
+        }.get(settings.llm_provider, settings.ollama_llm_model)
+        embedding_model = (
+            settings.openai_embedding_model
+            if settings.embedding_provider == "openai"
+            else settings.ollama_embedding_model
+        )
         conv = Conversation(
             id=str(uuid.uuid4()),
             title=question[:80],
             model_provider=settings.llm_provider,
-            model_name=settings.ollama_llm_model,
+            model_name=llm_model,
             embedding_provider=settings.embedding_provider,
-            embedding_model=settings.ollama_embedding_model,
+            embedding_model=embedding_model,
         )
         db.add(conv)
         db.commit()
@@ -121,6 +130,8 @@ async def chat_query(
         # 排除刚保存的 user 消息（避免重复），也排除不含有效内容的
         if m.content.strip() and (m.id != user_msg.id)
     ]
+
+    _cancellation_flags[conversation_id] = asyncio.Event()
 
     # ── 根据配置选择模式 ──────────────────────────────────────
     if settings.agent_enabled:
@@ -243,18 +254,15 @@ async def _agent_event_generator(
     通过 tool_call/tool_result 事件向前端展示思考过程。
     """
     from app.agent.loop import AgentLoop
-    from app.agent.builtin_tools import (
-        get_citation_registry,
-        reset_citation_registry,
-        set_db_context,
-    )
+    from app.agent.context import AgentRunContext
     from app.services.generator import generator as gen_service
 
-    # 设置当前请求的数据库上下文（供内置工具使用）
-    set_db_context(db)
-
-    # 重置引用注册表（新请求开始时清空）
-    reset_citation_registry()
+    cancellation_event = _cancellation_flags.setdefault(conversation_id, asyncio.Event())
+    run_context = AgentRunContext(
+        db=db,
+        conversation_id=conversation_id,
+        cancellation_event=cancellation_event,
+    )
 
     # 创建 LLM provider
     llm_provider = await gen_service._get_provider()
@@ -274,6 +282,7 @@ async def _agent_event_generator(
             question=question,
             conversation_id=conversation_id,
             chat_history=chat_history,
+            context=run_context,
         ):
             evt_type = event.get("event", "")
             data = event.get("data", "")
@@ -324,7 +333,7 @@ async def _agent_event_generator(
         if full_content.strip():
             # Agent 模式下：从全局引用注册表构建引用元数据
             # 只保留 LLM 实际使用的引用编号（通过 [N] 检测到的）
-            all_registered = get_citation_registry()
+            all_registered = run_context.citations
             registered_by_index = {c["index"]: c for c in all_registered}
             citations = [
                 registered_by_index[idx]

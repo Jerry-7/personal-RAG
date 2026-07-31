@@ -20,6 +20,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, Optional
 
 from app.agent.tools import tool_registry
+from app.agent.context import AgentRunContext
 from app.config import settings
 from app.providers.base import AgentResponse, LLMProvider
 
@@ -84,6 +85,7 @@ class AgentLoop:
         question: str,
         conversation_id: Optional[str] = None,
         chat_history: Optional[list[dict[str, str]]] = None,
+        context: AgentRunContext | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         执行 Agent 主循环，yield SSE 事件。
@@ -129,9 +131,7 @@ class AgentLoop:
             logger.debug("Agent iteration %d/%d", iteration, self.max_iterations)
 
             # 检查取消标志
-            if conversation_id:
-                from app.api.chat import _cancellation_flags
-                if conversation_id in _cancellation_flags and _cancellation_flags[conversation_id].is_set():
+            if context and context.is_cancelled():
                     yield {"event": "token", "data": " [生成已取消]"}
                     force_answer_reason = "cancelled"
                     break
@@ -169,7 +169,11 @@ class AgentLoop:
                     }
 
                     # 执行工具
-                    result = await self.tools.execute(tc.name, tc.arguments)
+                    result = await self.tools.execute(
+                        tc.name,
+                        tc.arguments,
+                        context=context,
+                    )
 
                     # 通知前端结果
                     yield {
