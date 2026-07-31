@@ -14,6 +14,32 @@ from app.db.database import get_db
 router = APIRouter()
 
 
+@router.get("/sources/web/{snapshot_id}")
+async def get_web_snapshot(snapshot_id: str, db: Session = Depends(get_db)):
+    from app.db.models import WebSnapshot
+    snapshot = db.query(WebSnapshot).filter(WebSnapshot.id == snapshot_id).first()
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="网页快照不存在")
+    return {
+        "id": snapshot.id, "url": snapshot.canonical_url,
+        "title": snapshot.title, "content": snapshot.content,
+        "content_type": snapshot.content_type, "fetched_at": snapshot.fetched_at,
+        "content_hash": snapshot.content_hash,
+    }
+
+
+@router.get("/sources/notes/{note_id}")
+async def get_note_source(note_id: str, db: Session = Depends(get_db)):
+    from app.db.models import Note
+    note = db.query(Note).filter(Note.id == note_id).first()
+    if not note:
+        raise HTTPException(status_code=404, detail="笔记不存在")
+    return {
+        "id": note.id, "title": note.title,
+        "content_md": note.content_md, "updated_at": note.updated_at,
+    }
+
+
 @router.get("/sources/{doc_id}/chunks/{chunk_id}")
 async def get_source_chunk(
     doc_id: str,

@@ -11,5 +11,7 @@ Agent 模块
 from app.agent.tools import ToolRegistry, tool_registry
 from app.agent.loop import AgentLoop
 from app.agent import builtin_tools  # noqa: F401 — 注册内置工具
+from app.agent import research_tools  # noqa: F401 — 注册联网研究工具
+from app.agent import note_tools  # noqa: F401 — 注册笔记草稿工具
 
 __all__ = ["ToolRegistry", "tool_registry", "AgentLoop"]
