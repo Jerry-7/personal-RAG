@@ -42,6 +42,7 @@ def _register_chunks(
             "index": context.citation_counter,
             "document_id": chunk.get("document_id", ""),
             "chunk_id": chunk.get("chunk_id", ""),
+            "source_id": chunk.get("source_id", ""),
             "snippet": chunk.get("text", "")[:200],
             "filename": chunk.get("filename", ""),
             "page_number": chunk.get("page_number"),
@@ -148,9 +149,10 @@ async def _read_chunk(chunk_id: str, *, context: AgentRunContext) -> str:
         return f"未找到分块: {chunk_id}"
 
     # 获取文档信息
-    from app.db.models import Document
+    from app.db.models import Document, KnowledgeSource
     doc = context.db.query(Document).filter(Document.id == chunk.document_id).first()
-    doc_name = doc.original_name if doc else "未知文档"
+    source = context.db.query(KnowledgeSource).filter(KnowledgeSource.id == chunk.source_id).first()
+    doc_name = doc.original_name if doc else (source.title if source else "未知来源")
 
     parts = [f"文档: {doc_name}"]
     if chunk.page_number:

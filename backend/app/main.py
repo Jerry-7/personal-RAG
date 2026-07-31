@@ -6,7 +6,8 @@ FastAPI 应用主模块
 启动事件等。应用使用 lifespan 机制管理生命周期。
 """
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -15,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
 from app.config import settings
-from app.db.database import init_db
+from app.db.database import init_db, run_migrations
 
 
 @asynccontextmanager
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
 
     # 初始化数据库表
     init_db()
+    run_migrations()
 
     from app.db.database import SessionLocal
     from app.services.index_consistency import repair_vector_index
@@ -43,6 +45,10 @@ async def lifespan(app: FastAPI):
         repair_result = repair_vector_index(db)
         if any(repair_result.values()):
             print(f" 向量索引一致性修复: {repair_result}")
+
+    from app.services.maintenance import cleanup_expired_web_snapshots, run_daily_maintenance
+    cleanup_expired_web_snapshots()
+    maintenance_task = asyncio.create_task(run_daily_maintenance())
 
     # 注册内置文档解析器
     from app.services.parser.pdf import PDFParser
@@ -80,6 +86,9 @@ async def lifespan(app: FastAPI):
     yield
 
     # ── 关闭 ──────────────────────────────────────────────────
+    maintenance_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await maintenance_task
     from app.services.task_manager import task_manager
     await task_manager.shutdown(timeout=settings.indexing_shutdown_timeout_secs)
 

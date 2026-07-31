@@ -40,3 +40,5 @@ python-dotenv==1.0.*
 httpx==0.28.*
 aiofiles==24.1.*
 uuid7==0.1.*
+alembic==1.14.*
+trafilatura==2.0.*

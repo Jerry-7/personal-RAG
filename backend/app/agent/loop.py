@@ -15,20 +15,23 @@ LLM 自主决策何时调用工具、调用哪个工具、何时生成最终回�
 支持 SSE 流式事件输出，前端可实时查看 Agent 思考过程。
 """
 
+import json
 import logging
+import time
 from collections.abc import AsyncGenerator
 from typing import Any, Optional
 
 from app.agent.tools import tool_registry
 from app.agent.context import AgentRunContext
 from app.config import settings
+from app.db.models import ToolExecution
 from app.providers.base import AgentResponse, LLMProvider
 
 logger = logging.getLogger(__name__)
 
 # Agent System Prompt 模板
-AGENT_SYSTEM_PROMPT = """You are a helpful AI assistant with access to document search tools.
-You can search uploaded documents to find information that helps answer the user's question.
+AGENT_SYSTEM_PROMPT = """You are a local-first personal research assistant.
+You can search uploaded documents and notes, and when enabled you can search and read public web pages.
 
 ## Available Tools
 {tool_list}
@@ -42,6 +45,8 @@ You can search uploaded documents to find information that helps answer the user
 4. If multiple searches don't find relevant info, honestly tell the user.
 5. After gathering sufficient information, provide a comprehensive answer.
 6. Do NOT make up information not found in the search results.
+7. Never claim that you deleted, renamed, or modified a document. No such tools are available.
+8. When local and web sources are both useful, synthesize them while preserving their exact citation numbers.
 
 ## Response Format
 - If you need to search, just call the tool directly — no need to explain.
@@ -109,8 +114,12 @@ class AgentLoop:
             dict: SSE 事件
         """
         # ── 构建初始消息 ──────────────────────────────────────
-        tool_list = self._build_tool_list()
+        tool_list = self._build_tool_list(context)
         system_prompt = AGENT_SYSTEM_PROMPT.format(tool_list=tool_list)
+        if context and context.mode == "local":
+            system_prompt += "\nNetwork access is disabled for this run. Use only local sources."
+        elif context and context.mode == "web":
+            system_prompt += "\nThis is web mode. Web search is mandatory before the final answer."
 
         messages: list[dict[str, str]] = [
             {"role": "system", "content": system_prompt},
@@ -126,18 +135,29 @@ class AgentLoop:
         iteration = 0
         force_answer_reason: str = ""  # 空字符串 = 未触发强制模式
 
+        # Web mode has a deterministic minimum contract: at least one search.
+        if context and context.mode == "web" and self.tools.get("web_search"):
+            async for event in self._execute_tool(
+                "web_search", {"query": question}, 0, context
+            ):
+                yield event
+                if event["event"] == "tool_result":
+                    result = event["data"]["result"]
+                    messages.append({"role": "system", "content": f"Initial web search results:\n{result}"})
+
         while iteration < self.max_iterations and not force_answer_reason:
             iteration += 1
             logger.debug("Agent iteration %d/%d", iteration, self.max_iterations)
 
             # 检查取消标志
             if context and context.is_cancelled():
-                    yield {"event": "token", "data": " [生成已取消]"}
-                    force_answer_reason = "cancelled"
-                    break
+                yield {"event": "token", "data": " [生成已取消]"}
+                force_answer_reason = "cancelled"
+                break
 
             # Step 1: LLM 决策
-            tools_schema = self.tools.to_openai_format()
+            excluded_sources = {"web"} if context and context.mode == "local" else set()
+            tools_schema = self.tools.to_openai_format(exclude_sources=excluded_sources)
             if not tools_schema:
                 # 没有工具可用，直接使用已有对话生成最终回答
                 logger.warning("No tools available, falling back to plain generation")
@@ -163,23 +183,13 @@ class AgentLoop:
                 # LLM 选择调用工具
                 for tc in response.tool_calls:
                     # 通知前端
-                    yield {
-                        "event": "tool_call",
-                        "data": {"name": tc.name, "arguments": tc.arguments},
-                    }
-
-                    # 执行工具
-                    result = await self.tools.execute(
-                        tc.name,
-                        tc.arguments,
-                        context=context,
-                    )
-
-                    # 通知前端结果
-                    yield {
-                        "event": "tool_result",
-                        "data": {"name": tc.name, "result": result},
-                    }
+                    result = ""
+                    async for tool_event in self._execute_tool(
+                        tc.name, tc.arguments, iteration, context
+                    ):
+                        yield tool_event
+                        if tool_event["event"] == "tool_result":
+                            result = tool_event["data"]["result"]
 
                     # 将工具调用和结果加入消息历史
                     messages.append({
@@ -253,6 +263,8 @@ class AgentLoop:
         #   1. 超过最大迭代次数
         #   2. LLM 返回空响应
         #   3. 没有可用工具
+        if force_answer_reason == "cancelled":
+            return
         if force_answer_reason == "empty_response":
             logger.info("Forcing final answer due to empty LLM response")
             yield {
@@ -315,9 +327,10 @@ class AgentLoop:
 
         # 不 yield done —— chat.py 在生成器耗尽后处理
 
-    def _build_tool_list(self) -> str:
+    def _build_tool_list(self, context: AgentRunContext | None = None) -> str:
         """构建供 system prompt 显示的工具列表。"""
-        tools = self.tools.list_all()
+        excluded_sources = {"web"} if context and context.mode == "local" else set()
+        tools = self.tools.list_all(exclude_sources=excluded_sources)
         if not tools:
             return "(No tools available)"
 
@@ -330,3 +343,71 @@ class AgentLoop:
             )
             lines.append(f"- **{t.name}**({param_desc}): {t.description}")
         return "\n".join(lines)
+
+    async def _execute_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        iteration: int,
+        context: AgentRunContext | None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Execute one tool with persisted, user-visible audit metadata."""
+        execution = None
+        if context and context.run_id:
+            execution = ToolExecution(
+                run_id=context.run_id,
+                iteration=iteration,
+                tool_name=name,
+                arguments_json=json.dumps(arguments, ensure_ascii=False),
+                status="running",
+            )
+            context.db.add(execution)
+            context.db.commit()
+
+        execution_id = execution.id if execution else ""
+        yield {
+            "event": "tool_call",
+            "data": {"id": execution_id, "name": name, "arguments": arguments, "status": "running"},
+        }
+
+        started = time.perf_counter()
+        source_count = len(context.citations) if context else 0
+        tool = self.tools.get(name)
+        if context and context.mode == "local" and tool and tool.source == "web":
+            result = "Tool execution failed: network tools are disabled in local mode"
+        else:
+            result = await self.tools.execute(name, arguments, context=context)
+        duration_ms = round((time.perf_counter() - started) * 1000)
+        failed = result.startswith(("工具执行失败:", "Tool execution failed:"))
+
+        if context:
+            remaining = max(0, context.max_tool_output_chars - context.tool_output_chars)
+            if len(result) > remaining:
+                result = result[:remaining] + "...(本次研究的工具输出预算已用尽)"
+            context.tool_output_chars += len(result)
+
+        if execution:
+            execution.status = "failed" if failed else "completed"
+            execution.duration_ms = duration_ms
+            execution.result_preview = result[:2000]
+            execution.error_message = result if failed else None
+            context.db.commit()
+
+        yield {
+            "event": "tool_result",
+            "data": {
+                "id": execution_id,
+                "name": name,
+                "result": result,
+                "status": "failed" if failed else "completed",
+                "duration_ms": duration_ms,
+            },
+        }
+        if name == "create_note_draft" and not failed:
+            try:
+                yield {"event": "note_draft", "data": json.loads(result)}
+            except json.JSONDecodeError:
+                logger.warning("create_note_draft returned invalid JSON")
+        if context:
+            for source in context.citations[source_count:]:
+                yield {"event": "source", "data": source}

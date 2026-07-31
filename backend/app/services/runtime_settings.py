@@ -29,6 +29,14 @@ GROUP_KEYS = {
         "retrieval_top_k": "retrieval_top_k",
         "final_top_k": "final_top_k",
     },
+    "web": {
+        "searxng_url": "searxng_base_url",
+        "language": "web_search_language",
+        "safe_search": "web_safe_search",
+        "fetch_timeout_secs": "web_fetch_timeout_secs",
+        "page_budget": "web_page_budget",
+        "snapshot_retention_days": "web_snapshot_retention_days",
+    },
 }
 
 
@@ -67,11 +75,14 @@ def apply_runtime_settings(values: dict[str, Any]) -> None:
     from app.services.chunker import chunker
     from app.services.embedder import embedding_service
     from app.services.generator import generator
+    from app.services.web_search import search_provider
 
     chunker.chunk_size = int(settings.chunk_size)
     chunker.chunk_overlap = int(settings.chunk_overlap)
     embedding_service.reset(settings.embedding_provider)
     generator.reset(settings.llm_provider)
+    if hasattr(search_provider, "base_url"):
+        search_provider.base_url = settings.searxng_base_url.rstrip("/")
 
 
 def load_persisted_settings(db: Session) -> dict[str, Any]:

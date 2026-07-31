@@ -142,13 +142,16 @@ class ToolRegistry:
         """按名称获取工具定义。"""
         return self._tools.get(name)
 
-    def list_all(self) -> list[ToolDef]:
-        """列出所有已注册工具。"""
-        return list(self._tools.values())
+    def list_all(self, *, exclude_sources: set[str] | None = None) -> list[ToolDef]:
+        """列出工具，可按来源排除。"""
+        excluded = exclude_sources or set()
+        return [tool for tool in self._tools.values() if tool.source not in excluded]
 
-    def to_openai_format(self) -> list[dict[str, Any]]:
+    def to_openai_format(
+        self, *, exclude_sources: set[str] | None = None
+    ) -> list[dict[str, Any]]:
         """将所有工具导出为 OpenAI tool definitions 格式。"""
-        return [t.to_openai_format() for t in self._tools.values()]
+        return [t.to_openai_format() for t in self.list_all(exclude_sources=exclude_sources)]
 
     # ── 执行 ──────────────────────────────────────────────────
 

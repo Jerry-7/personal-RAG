@@ -24,9 +24,10 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.config import settings
 from app.db.database import get_db
-from app.db.models import Conversation, Message
+from app.db.models import AgentRun, Conversation, Message
 from app.services.retriever import retriever
 from app.services.generator import generator
+from app.services.conversation_memory import conversation_memory
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -77,6 +78,11 @@ async def chat_query(
 
     conversation_id = body.get("conversation_id")
     top_k = body.get("top_k", settings.final_top_k)
+    mode = body.get("mode", "auto")
+    if mode not in {"auto", "local", "web"}:
+        async def _mode_error_gen():
+            yield {"event": "error", "data": json.dumps({"message": "mode 必须是 auto、local 或 web"})}
+        return EventSourceResponse(_mode_error_gen())
 
     # ── 创建或获取对话 ──────────────────────────────────────
     if conversation_id:
@@ -118,24 +124,17 @@ async def chat_query(
 
     # ── 加载历史对话（供 LLM 上下文） ──────────────────────────
     # 查询该对话的历史消息（按时间升序），转换为 [{role, content}, ...]
-    history_messages = (
-        db.query(Message)
-        .filter(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at.asc())
-        .all()
+    chat_history = conversation_memory.get_context(
+        db, conversation_id, exclude_message_id=user_msg.id
     )
-    chat_history = [
-        {"role": m.role, "content": m.content}
-        for m in history_messages
-        # 排除刚保存的 user 消息（避免重复），也排除不含有效内容的
-        if m.content.strip() and (m.id != user_msg.id)
-    ]
 
     _cancellation_flags[conversation_id] = asyncio.Event()
 
     # ── 根据配置选择模式 ──────────────────────────────────────
     if settings.agent_enabled:
-        stream = _agent_event_generator(question, conversation_id, db, conv, chat_history)
+        stream = _agent_event_generator(
+            question, conversation_id, db, conv, chat_history, mode, user_msg.id
+        )
     else:
         stream = _classic_event_generator(question, top_k, conversation_id, db, conv, chat_history)
 
@@ -217,6 +216,7 @@ async def _classic_event_generator(
         db.add(ai_msg)
         conv.updated_at = datetime.now(timezone.utc)
         db.commit()
+        conversation_memory.update_summary(db, conversation_id)
 
         # Step 6: 发送完成事件
         yield {
@@ -246,6 +246,8 @@ async def _agent_event_generator(
     db: Session,
     conv: Conversation,
     chat_history: list[dict[str, str]],
+    mode: str,
+    user_message_id: str,
 ):
     """
     Agent 模式事件生成器。
@@ -258,10 +260,24 @@ async def _agent_event_generator(
     from app.services.generator import generator as gen_service
 
     cancellation_event = _cancellation_flags.setdefault(conversation_id, asyncio.Event())
+    agent_run = AgentRun(
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        mode=mode,
+        status="running",
+        web_page_budget=settings.web_page_budget,
+        max_depth=settings.web_crawl_max_depth,
+    )
+    db.add(agent_run)
+    db.commit()
     run_context = AgentRunContext(
         db=db,
         conversation_id=conversation_id,
+        run_id=agent_run.id,
+        mode=mode,
         cancellation_event=cancellation_event,
+        web_page_budget=agent_run.web_page_budget,
+        max_crawl_depth=agent_run.max_depth,
     )
 
     # 创建 LLM provider
@@ -272,10 +288,19 @@ async def _agent_event_generator(
 
     used_indices: list[int] = []
     full_content = ""
+    run_error_message = ""
 
     try:
-        # 初始化连接
-        yield {"event": "token", "data": json.dumps({"text": ""})}
+        yield {
+            "event": "run_started",
+            "data": json.dumps({
+                "run_id": agent_run.id,
+                "conversation_id": conversation_id,
+                "mode": mode,
+                "web_page_budget": agent_run.web_page_budget,
+                "max_depth": agent_run.max_depth,
+            }),
+        }
 
         # 运行 Agent 循环
         async for event in agent.run(
@@ -313,6 +338,7 @@ async def _agent_event_generator(
 
             elif evt_type == "error":
                 # 错误事件直接转发
+                run_error_message = str(data.get("message", "Agent 执行失败")) if isinstance(data, dict) else str(data)
                 yield {"event": "error", "data": json.dumps(data)}
                 # 错误发生后仍尝试保存已有内容
 
@@ -360,7 +386,13 @@ async def _agent_event_generator(
             )
             db.add(ai_msg)
             conv.updated_at = datetime.now(timezone.utc)
+            agent_run.assistant_message_id = ai_msg.id
+            agent_run.status = "failed" if run_error_message else ("cancelled" if cancellation_event.is_set() else "completed")
+            agent_run.error_message = run_error_message or None
+            agent_run.web_pages_used = run_context.web_pages_used
+            agent_run.completed_at = datetime.now(timezone.utc)
             db.commit()
+            conversation_memory.update_summary(db, conversation_id)
 
             # 发送完成事件
             yield {
@@ -369,6 +401,7 @@ async def _agent_event_generator(
                     "citations": citations,
                     "conversation_id": conversation_id,
                     "message_id": ai_msg.id,
+                    "run_id": agent_run.id,
                 }, ensure_ascii=False),
             }
         else:
@@ -379,11 +412,22 @@ async def _agent_event_generator(
                     "citations": [],
                     "conversation_id": conversation_id,
                     "message_id": "",
+                    "run_id": agent_run.id,
                 }),
             }
+            agent_run.status = "failed" if run_error_message else ("cancelled" if cancellation_event.is_set() else "completed")
+            agent_run.error_message = run_error_message or None
+            agent_run.web_pages_used = run_context.web_pages_used
+            agent_run.completed_at = datetime.now(timezone.utc)
+            db.commit()
 
     except Exception as e:
         logger.exception("Agent generation failed")
+        agent_run.status = "failed"
+        agent_run.error_message = str(e)
+        agent_run.web_pages_used = run_context.web_pages_used
+        agent_run.completed_at = datetime.now(timezone.utc)
+        db.commit()
         yield {
             "event": "error",
             "data": json.dumps({"message": f"Agent 生成失败: {str(e)}"}),

@@ -72,6 +72,18 @@ class Settings(BaseSettings):
     # ── Agent 配置 ────────────────────────────────────────────
     agent_enabled: bool = True
     agent_max_iterations: int = 5
+    agent_context_max_chars: int = 24000
+
+    # ── Web research ─────────────────────────────────────────
+    searxng_base_url: str = "http://127.0.0.1:8888"
+    web_search_language: str = "all"
+    web_safe_search: int = 1
+    web_fetch_timeout_secs: int = 10
+    web_page_budget: int = 8
+    web_crawl_max_depth: int = 2
+    web_snapshot_retention_days: int = 30
+    web_html_max_bytes: int = 2 * 1024 * 1024
+    web_pdf_max_bytes: int = 10 * 1024 * 1024
 
 
 # 单例实例

@@ -62,6 +62,14 @@ async def get_settings(db: Session = Depends(get_db)):
             "retrieval_top_k": int(db_settings.get("retrieval_top_k", app_settings.retrieval_top_k)),
             "final_top_k": int(db_settings.get("final_top_k", app_settings.final_top_k)),
         },
+        "web": {
+            "searxng_url": db_settings.get("searxng_base_url", app_settings.searxng_base_url),
+            "language": db_settings.get("web_search_language", app_settings.web_search_language),
+            "safe_search": int(db_settings.get("web_safe_search", app_settings.web_safe_search)),
+            "fetch_timeout_secs": int(db_settings.get("web_fetch_timeout_secs", app_settings.web_fetch_timeout_secs)),
+            "page_budget": int(db_settings.get("web_page_budget", app_settings.web_page_budget)),
+            "snapshot_retention_days": int(db_settings.get("web_snapshot_retention_days", app_settings.web_snapshot_retention_days)),
+        },
     }
 
 
