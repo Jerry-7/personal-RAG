@@ -6,14 +6,18 @@
 从 FAISS 获取相似向量 ID 后，通过 SQLite 补充文本和元数据。
 """
 
-import uuid
+import logging
+import re
 from typing import Any, Optional
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db.vector_store import vector_store
 from app.services.embedder import embedding_service
+
+logger = logging.getLogger(__name__)
 
 
 class Retriever:
@@ -62,17 +66,27 @@ class Retriever:
 
         k = top_k or settings.retrieval_top_k
 
-        # Step 1: 查询嵌入
-        query_vec = await self._embedder.embed_single(query)
+        candidate_k = max(k * 2, k)
+        vector_ids: list[str] = []
+        vector_scores: dict[str, float] = {}
+        try:
+            query_vec = await self._embedder.embed_single(query)
+            results = self._vector_store.query(query_vec, n_results=candidate_k)
+            vector_ids = results["ids"][0] if results["ids"] else []
+            distances = results["distances"][0] if results["distances"] else []
+            vector_scores = {
+                chunk_id: (distances[index] + 1.0) / 2.0
+                for index, chunk_id in enumerate(vector_ids)
+                if index < len(distances)
+            }
+        except Exception:
+            logger.exception("Vector retrieval failed; continuing with lexical recall")
 
-        # Step 2: FAISS 向量搜索
-        results = self._vector_store.query(query_vec, n_results=k)
-
-        if not results["ids"] or not results["ids"][0]:
+        lexical_ids = self._lexical_search(query, db, candidate_k)
+        chunk_ids, fused_scores = self._reciprocal_rank_fusion(vector_ids, lexical_ids)
+        chunk_ids = chunk_ids[:candidate_k]
+        if not chunk_ids:
             return []
-
-        chunk_ids = results["ids"][0]
-        distances = results["distances"][0] if results["distances"] else []
 
         # Step 3: 从 SQLite 获取元数据和文本
         chunks_map = {}
@@ -90,8 +104,7 @@ class Retriever:
 
             # 相似度: FAISS IndexFlatIP 返回的是内积 (归一化向量 = cosine)
             # 范围 [-1, 1]，转换为 [0, 1]
-            score = distances[i] if i < len(distances) else 0.0
-            score_normalized = (score + 1.0) / 2.0  # [-1,1] → [0,1]
+            score_normalized = fused_scores.get(chunk_id, vector_scores.get(chunk_id, 0.0))
 
             retrieved.append({
                 "chunk_id": chunk_id,
@@ -117,6 +130,57 @@ class Retriever:
         # 按相似度排序
         retrieved.sort(key=lambda x: x["score"], reverse=True)
         return retrieved[:k]
+
+    def _lexical_search(self, query: str, db: Session, limit: int) -> list[str]:
+        """Recall exact terms through FTS5, with LIKE as a portable fallback."""
+        normalized = query.strip()
+        if not normalized:
+            return []
+        try:
+            fts_query = self._build_fts_query(normalized)
+            if not fts_query:
+                raise ValueError("query is too short for trigram FTS")
+            rows = db.execute(text(
+                "SELECT chunks.id FROM chunks_fts "
+                "JOIN chunks ON chunks.rowid = chunks_fts.rowid "
+                "WHERE chunks_fts MATCH :query ORDER BY bm25(chunks_fts) LIMIT :limit"
+            ), {"query": fts_query, "limit": limit}).all()
+            return [row[0] for row in rows]
+        except Exception:
+            db.rollback()
+            escaped = normalized.replace("%", "\\%").replace("_", "\\_")
+            rows = db.execute(text(
+                "SELECT id FROM chunks WHERE text LIKE :query ESCAPE '\\' LIMIT :limit"
+            ), {"query": f"%{escaped}%", "limit": limit}).all()
+            return [row[0] for row in rows]
+
+    @staticmethod
+    def _build_fts_query(query: str) -> str:
+        """Build a broad trigram OR query that works for Chinese and English."""
+        grams: list[str] = []
+        for segment in re.findall(r"[\w\u4e00-\u9fff]+", query.lower()):
+            if len(segment) < 3:
+                continue
+            grams.extend(segment[index:index + 3] for index in range(len(segment) - 2))
+        unique_grams = list(dict.fromkeys(grams))[:16]
+        return " OR ".join(f'"{gram}"' for gram in unique_grams)
+
+    @staticmethod
+    def _reciprocal_rank_fusion(
+        vector_ids: list[str],
+        lexical_ids: list[str],
+        rank_constant: int = 60,
+    ) -> tuple[list[str], dict[str, float]]:
+        scores: dict[str, float] = {}
+        for ranking in (vector_ids, lexical_ids):
+            for rank, chunk_id in enumerate(ranking, start=1):
+                scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (rank_constant + rank)
+        ordered = sorted(scores, key=scores.get, reverse=True)
+        if not scores:
+            return [], {}
+        max_score = max(scores.values())
+        normalized = {chunk_id: score / max_score for chunk_id, score in scores.items()}
+        return ordered, normalized
 
 
 # 全局单例

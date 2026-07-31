@@ -9,7 +9,7 @@
 import uuid
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
@@ -61,6 +61,34 @@ def init_db() -> None:
     应在应用启动时调用。如果表已存在则跳过（不重复创建）。
     """
     Base.metadata.create_all(bind=engine)
+    # FTS5 supplies local keyword recall for hybrid retrieval. Triggers keep the
+    # external-content index synchronized with the chunks table.
+    with engine.begin() as connection:
+        try:
+            connection.execute(text(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5("
+                "text, content='chunks', content_rowid='rowid', tokenize='trigram')"
+            ))
+            connection.execute(text(
+                "CREATE TRIGGER IF NOT EXISTS chunks_fts_insert AFTER INSERT ON chunks BEGIN "
+                "INSERT INTO chunks_fts(rowid, text) VALUES (new.rowid, new.text); END"
+            ))
+            connection.execute(text(
+                "CREATE TRIGGER IF NOT EXISTS chunks_fts_delete AFTER DELETE ON chunks BEGIN "
+                "INSERT INTO chunks_fts(chunks_fts, rowid, text) "
+                "VALUES ('delete', old.rowid, old.text); END"
+            ))
+            connection.execute(text(
+                "CREATE TRIGGER IF NOT EXISTS chunks_fts_update AFTER UPDATE OF text ON chunks BEGIN "
+                "INSERT INTO chunks_fts(chunks_fts, rowid, text) "
+                "VALUES ('delete', old.rowid, old.text); "
+                "INSERT INTO chunks_fts(rowid, text) VALUES (new.rowid, new.text); END"
+            ))
+            connection.execute(text("INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')"))
+        except Exception:
+            # Some SQLite builds omit FTS5. Retrieval detects this and falls
+            # back to vector-only search.
+            pass
 
 
 def get_db() -> Session:
