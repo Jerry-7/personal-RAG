@@ -14,6 +14,7 @@ data/uploads/*
 data/chroma/*
 data/transcripts/*
 data/app.db
+data/*.bak
 !data/uploads/.gitkeep
 !data/chroma/.gitkeep
 !data/transcripts/.gitkeep
@@ -27,3 +28,5 @@ data/app.db
 .idea/
 *.swp
 *.swo
+.server.out
+.server.err
