@@ -82,13 +82,17 @@ class VectorStore:
 
     def _save(self) -> None:
         """将 FAISS 索引和 ID 映射持久化到磁盘。"""
-        faiss.write_index(self._index, str(self._index_path))
-        with open(self._id_map_path, "wb") as f:
+        index_tmp = self._index_path.with_suffix(".faiss.tmp")
+        map_tmp = self._id_map_path.with_suffix(".pkl.tmp")
+        faiss.write_index(self._index, str(index_tmp))
+        with open(map_tmp, "wb") as f:
             pickle.dump({
                 "id_map": self._id_map,
                 "reverse_id_map": self._reverse_id_map,
                 "next_id": self._next_id,
             }, f)
+        os.replace(index_tmp, self._index_path)
+        os.replace(map_tmp, self._id_map_path)
 
     def _normalize(self, vectors: np.ndarray) -> np.ndarray:
         """
@@ -296,6 +300,28 @@ class VectorStore:
             self._save()
 
         return len(ids_to_remove)
+
+    def delete_chunks(self, chunk_ids: list[str]) -> int:
+        """Delete vectors by their exact SQLite chunk IDs."""
+        faiss_ids = [
+            self._reverse_id_map[chunk_id]
+            for chunk_id in chunk_ids
+            if chunk_id in self._reverse_id_map
+        ]
+        if not faiss_ids or not hasattr(self, "_index"):
+            return 0
+
+        self._index.remove_ids(np.asarray(faiss_ids, dtype=np.int64))
+        for chunk_id in chunk_ids:
+            faiss_id = self._reverse_id_map.pop(chunk_id, None)
+            if faiss_id is not None:
+                self._id_map.pop(faiss_id, None)
+        self._save()
+        return len(faiss_ids)
+
+    def chunk_ids(self) -> set[str]:
+        """Return a snapshot of all chunk IDs represented in the index."""
+        return set(self._reverse_id_map)
 
     def _rebuild_index(self) -> None:
         """

@@ -35,7 +35,7 @@ class EventBus:
     """
 
     def __init__(self) -> None:
-        self._subscribers: dict[str, asyncio.Queue[dict[str, Any]]] = {}
+        self._subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
 
     def subscribe(self, doc_id: str) -> asyncio.Queue[dict[str, Any]]:
         """
@@ -50,11 +50,15 @@ class EventBus:
         Returns:
             该文档对应的事件队列
         """
-        if doc_id not in self._subscribers:
-            self._subscribers[doc_id] = asyncio.Queue()
-        return self._subscribers[doc_id]
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._subscribers.setdefault(doc_id, set()).add(queue)
+        return queue
 
-    def unsubscribe(self, doc_id: str) -> None:
+    def unsubscribe(
+        self,
+        doc_id: str,
+        queue: asyncio.Queue[dict[str, Any]] | None = None,
+    ) -> None:
         """
         取消订阅并清理队列。
 
@@ -63,7 +67,15 @@ class EventBus:
         Args:
             doc_id: 文档唯一 ID
         """
-        self._subscribers.pop(doc_id, None)
+        if queue is None:
+            self._subscribers.pop(doc_id, None)
+            return
+        queues = self._subscribers.get(doc_id)
+        if queues is None:
+            return
+        queues.discard(queue)
+        if not queues:
+            self._subscribers.pop(doc_id, None)
 
     def publish(self, doc_id: str, event: dict[str, Any]) -> None:
         """
@@ -76,13 +88,11 @@ class EventBus:
             doc_id: 文档唯一 ID
             event: 事件字典，如 {"event": "progress", "data": {...}}
         """
-        queue = self._subscribers.get(doc_id)
-        if queue is None:
-            queue = self.subscribe(doc_id)
-        try:
-            queue.put_nowait(event)
-        except asyncio.QueueFull:
-            logger.warning(f"事件队列已满, doc_id={doc_id}, 丢弃事件")
+        for queue in tuple(self._subscribers.get(doc_id, ())):
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                logger.warning(f"事件队列已满, doc_id={doc_id}, 丢弃事件")
 
     def cleanup(self, doc_id: str) -> None:
         """
@@ -99,7 +109,7 @@ class EventBus:
     @property
     def active_count(self) -> int:
         """当前活跃的订阅者数量。"""
-        return len(self._subscribers)
+        return sum(len(queues) for queues in self._subscribers.values())
 
 
 # 全局单例

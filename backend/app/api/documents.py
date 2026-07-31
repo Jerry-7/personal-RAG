@@ -13,13 +13,15 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+import aiofiles
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db.database import get_db
-from app.db.models import Document
+from app.db.database import SessionLocal
+from app.db.models import Document, IndexJob
 from app.schemas.document import (
     DeleteDocumentResponse,
     DocumentItem,
@@ -28,9 +30,10 @@ from app.schemas.document import (
 )
 from app.services.event_bus import event_bus
 from app.services.indexer import indexing_pipeline
-from app.services.indexing_worker import run_indexing
+from app.services.indexing_worker import ensure_index_job, run_indexing
 from app.services.parser.registry import parser_registry
 from app.services.task_manager import task_manager
+from app.utils.file_utils import get_safe_filename
 
 router = APIRouter()
 
@@ -74,41 +77,54 @@ async def upload_document(
         )
 
     # ── 保存文件 ─────────────────────────────────────────────
-    content = await file.read()
-    file_size = len(content)
-
-    if file_size > settings.max_upload_size_mb * 1024 * 1024:
-        raise HTTPException(
-            status_code=400,
-            detail=f"文件大小超出限制 ({settings.max_upload_size_mb}MB)",
-        )
-
-    file_hash = hashlib.sha256(content).hexdigest()
-    safe_name = f"{file_hash}_{file.filename}"
-    dest_path = settings.upload_dir / safe_name
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
-    dest_path.write_bytes(content)
+    temp_path = settings.upload_dir / f".{uuid.uuid4()}.uploading"
+    hasher = hashlib.sha256()
+    file_size = 0
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+    try:
+        async with aiofiles.open(temp_path, "wb") as output:
+            while chunk := await file.read(1024 * 1024):
+                file_size += len(chunk)
+                if file_size > max_bytes:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"文件大小超出限制 ({settings.max_upload_size_mb}MB)",
+                    )
+                hasher.update(chunk)
+                await output.write(chunk)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+    file_hash = hasher.hexdigest()
+    safe_name = get_safe_filename(file.filename, file_hash)
+    dest_path = settings.upload_dir / safe_name
+    destination_existed = dest_path.exists()
+    temp_path.replace(dest_path)
+
+    # ── 去重检查 ──────────────────────────────────────────────
+    existing = db.query(Document).filter(Document.file_hash == file_hash).first()
+    if existing and existing.status == "indexed":
+        return DocumentUploadResponse(
+            id=existing.id,
+            filename=existing.filename,
+            original_name=existing.original_name,
+            file_type=existing.file_type,
+            status=existing.status,
+            created_at=existing.created_at,
+        )
 
     # ── 检查队列容量 ─────────────────────────────────────────
     if not task_manager.can_accept():
+        if not destination_existed and existing is None:
+            dest_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=429,
             detail=f"索引队列已满 ({task_manager.active_count}/{task_manager.max_concurrent})，请稍后再试",
         )
 
-    # ── 去重检查 ──────────────────────────────────────────────
-    existing = db.query(Document).filter(Document.file_hash == file_hash).first()
     if existing:
-        if existing.status == "indexed":
-            # 已成功索引，直接返回
-            return DocumentUploadResponse(
-                id=existing.id,
-                filename=existing.filename,
-                original_name=existing.original_name,
-                file_type=existing.file_type,
-                status=existing.status,
-                created_at=existing.created_at,
-            )
         # 存在但未成功索引，重用记录
         doc_id = existing.id
     else:
@@ -128,6 +144,7 @@ async def upload_document(
         db.commit()
 
     # ── 提交后台索引任务 ─────────────────────────────────────
+    ensure_index_job(db, doc_id)
     file_path_str = str(dest_path)
     await task_manager.submit(
         doc_id,
@@ -177,7 +194,33 @@ async def stream_document_progress(doc_id: str):
     async def event_generator():
         try:
             while True:
-                event = await queue.get()
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=2.0)
+                except TimeoutError:
+                    with SessionLocal() as status_db:
+                        job = status_db.query(IndexJob).filter(IndexJob.document_id == doc_id).first()
+                        doc = status_db.query(Document).filter(Document.id == doc_id).first()
+                        if not doc:
+                            yield "event: error\ndata: {\"status\":\"error\",\"message\":\"文档不存在\"}\n\n"
+                            break
+                        if (job and job.status == "completed") or doc.status == "indexed":
+                            data = json.dumps({
+                                "doc_id": doc_id,
+                                "status": "indexed",
+                                "chunk_count": doc.chunk_count,
+                            }, ensure_ascii=False)
+                            yield f"event: done\ndata: {data}\n\n"
+                            break
+                        if (job and job.status == "failed") or doc.status == "error":
+                            message = (job.error_message if job else None) or doc.error_message or "索引失败"
+                            data = json.dumps({
+                                "doc_id": doc_id,
+                                "status": "error",
+                                "message": message,
+                            }, ensure_ascii=False)
+                            yield f"event: error\ndata: {data}\n\n"
+                            break
+                    continue
                 event_type = event.get("event", "progress")
                 data = json.dumps(event.get("data", {}), ensure_ascii=False)
                 yield f"event: {event_type}\ndata: {data}\n\n"
@@ -187,7 +230,7 @@ async def stream_document_progress(doc_id: str):
             # 客户端断开连接
             pass
         finally:
-            event_bus.unsubscribe(doc_id)
+            event_bus.unsubscribe(doc_id, queue)
 
     return StreamingResponse(
         event_generator(),

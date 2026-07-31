@@ -180,3 +180,23 @@ class Setting(Base):
 
     def __repr__(self) -> str:
         return f"<Setting(key={self.key})>"
+
+
+class IndexJob(Base):
+    """Persistent state for a document indexing attempt."""
+
+    __tablename__ = "index_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    document_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("documents.id", ondelete="CASCADE"),
+        unique=True, nullable=False, index=True,
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    config_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    error_message: Mapped[str] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, server_default=func.now()
+    )

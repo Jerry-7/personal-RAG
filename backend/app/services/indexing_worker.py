@@ -11,14 +11,45 @@
 - 使用 SessionLocal() 创建独立 DB 会话
 """
 
+import asyncio
+import json
 import logging
 
 from app.db.database import SessionLocal
-from app.db.models import Document
+from app.config import settings
+from app.db.models import Document, IndexJob
 from app.services.event_bus import event_bus
 from app.services.indexer import indexing_pipeline
 
 logger = logging.getLogger(__name__)
+
+
+def index_config_snapshot() -> str:
+    """Serialize settings that determine index compatibility."""
+    model = (
+        settings.openai_embedding_model
+        if settings.embedding_provider == "openai"
+        else settings.ollama_embedding_model
+    )
+    return json.dumps({
+        "embedding_provider": settings.embedding_provider,
+        "embedding_model": model,
+        "chunk_size": settings.chunk_size,
+        "chunk_overlap": settings.chunk_overlap,
+    }, ensure_ascii=False)
+
+
+def ensure_index_job(db, doc_id: str) -> IndexJob:
+    job = db.query(IndexJob).filter(IndexJob.document_id == doc_id).first()
+    if job is None:
+        job = IndexJob(document_id=doc_id, status="queued", config_json=index_config_snapshot())
+        db.add(job)
+    else:
+        job.status = "queued"
+        job.config_json = index_config_snapshot()
+        job.error_message = None
+    db.commit()
+    return job
 
 
 async def run_indexing(
@@ -43,6 +74,11 @@ async def run_indexing(
     """
     db = SessionLocal()
     try:
+        job = ensure_index_job(db, doc_id)
+        job.status = "running"
+        job.attempts += 1
+        db.commit()
+
         async def progress_callback(status: str, message: str) -> None:
             """每步进度回调：发布 SSE 事件 + 更新数据库状态。"""
             event_bus.publish(doc_id, {
@@ -77,6 +113,9 @@ async def run_indexing(
         doc = db.query(Document).filter(Document.id == doc_id).first()
         chunk_count = doc.chunk_count if doc else 0
 
+        job.status = "completed"
+        job.error_message = None
+        db.commit()
         event_bus.publish(doc_id, {
             "event": "done",
             "data": {
@@ -86,8 +125,21 @@ async def run_indexing(
             },
         })
 
+    except asyncio.CancelledError:
+        db.rollback()
+        job = db.query(IndexJob).filter(IndexJob.document_id == doc_id).first()
+        if job:
+            job.status = "queued"
+            db.commit()
+        raise
     except Exception as e:
         logger.exception(f"后台索引失败, doc_id={doc_id}")
+        db.rollback()
+        job = db.query(IndexJob).filter(IndexJob.document_id == doc_id).first()
+        if job:
+            job.status = "failed"
+            job.error_message = str(e)
+            db.commit()
         event_bus.publish(doc_id, {
             "event": "error",
             "data": {
@@ -98,3 +150,37 @@ async def run_indexing(
         })
     finally:
         db.close()
+
+
+async def recover_pending_index_jobs() -> int:
+    """Requeue jobs left unfinished by a previous process."""
+    from app.services.task_manager import task_manager
+
+    db = SessionLocal()
+    submitted = 0
+    try:
+        jobs = db.query(IndexJob).filter(IndexJob.status.in_(("queued", "running"))).all()
+        for job in jobs:
+            if not task_manager.can_accept():
+                break
+            doc = db.query(Document).filter(Document.id == job.document_id).first()
+            if not doc or not doc.file_path:
+                job.status = "failed"
+                job.error_message = "文档或源文件信息不存在"
+                continue
+            task_args = {
+                "doc_id": doc.id,
+                "file_path": doc.file_path,
+                "original_name": doc.original_name,
+                "file_type": doc.file_type,
+                "file_hash": doc.file_hash,
+            }
+            await task_manager.submit(
+                doc.id,
+                lambda args=task_args: run_indexing(**args),
+            )
+            submitted += 1
+        db.commit()
+    finally:
+        db.close()
+    return submitted

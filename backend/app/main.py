@@ -35,6 +35,15 @@ async def lifespan(app: FastAPI):
     # 初始化数据库表
     init_db()
 
+    from app.db.database import SessionLocal
+    from app.services.index_consistency import repair_vector_index
+    from app.services.runtime_settings import load_persisted_settings
+    with SessionLocal() as db:
+        load_persisted_settings(db)
+        repair_result = repair_vector_index(db)
+        if any(repair_result.values()):
+            print(f" 向量索引一致性修复: {repair_result}")
+
     # 注册内置文档解析器
     from app.services.parser.pdf import PDFParser
     from app.services.parser.docx import DocxParser
@@ -62,6 +71,11 @@ async def lifespan(app: FastAPI):
         print(f" 音视频解析器不可用 (缺少依赖): {e}")
 
     print(f" 全部已注册解析器: {parser_registry.supported_extensions}")
+
+    from app.services.indexing_worker import recover_pending_index_jobs
+    recovered = await recover_pending_index_jobs()
+    if recovered:
+        print(f" 已恢复 {recovered} 个未完成索引任务")
 
     yield
 

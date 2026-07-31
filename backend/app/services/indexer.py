@@ -111,8 +111,16 @@ class IndexingPipeline:
             self._mark_error(db, doc_id, f"Embedding 失败: {str(e)}")
             raise RuntimeError(f"生成向量失败: {e}") from e
 
-        # ── Step 4: 存储到 ChromaDB ─────────────────────────
+        # ── Step 4: 准备 SQLite 记录 ─────────────────────────
         await self._notify(progress_callback, "storing", "正在存储向量...")
+        previous_chunk_ids = [
+            row[0]
+            for row in db.query(Chunk.id).filter(Chunk.document_id == doc_id).all()
+        ]
+        if previous_chunk_ids:
+            self._vector_store.delete_chunks(previous_chunk_ids)
+            db.query(Chunk).filter(Chunk.document_id == doc_id).delete()
+
         chunk_ids = [str(uuid.uuid4()) for _ in chunks]
         metadatas = []
         for i, ch in enumerate(chunks):
@@ -130,14 +138,7 @@ class IndexingPipeline:
             }
             metadatas.append(meta)
 
-        self._vector_store.add_chunks(
-            chunk_ids=chunk_ids,
-            texts=texts,
-            embeddings=embeddings,
-            metadatas=metadatas,
-        )
-
-        # ── Step 5: 存储 Chunk 记录到 SQLite ────────────────
+        # ── Step 5: 暂存 Chunk 记录到 SQLite ────────────────
         for i, ch in enumerate(chunks):
             chunk_record = Chunk(
                 id=chunk_ids[i],
@@ -148,7 +149,7 @@ class IndexingPipeline:
                 start_timestamp=ch["metadata"].get("start_timestamp"),
                 end_timestamp=ch["metadata"].get("end_timestamp"),
                 token_count=len(ch["text"]) // 4,  # 粗略估算
-                embedding_model=settings.ollama_embedding_model,
+                embedding_model=self._embedder.model_name,
             )
             db.add(chunk_record)
 
@@ -157,7 +158,20 @@ class IndexingPipeline:
             doc_record.status = "indexed"
             doc_record.chunk_count = len(chunks)
             doc_record.updated_at = __import__("datetime").datetime.now()
-        db.commit()
+        try:
+            db.flush()
+            self._vector_store.add_chunks(
+                chunk_ids=chunk_ids,
+                texts=texts,
+                embeddings=embeddings,
+                metadatas=metadatas,
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            self._vector_store.delete_chunks(chunk_ids)
+            self._mark_error(db, doc_id, "索引存储失败，已回滚本次写入")
+            raise
 
         await self._notify(progress_callback, "indexed", f"索引完成 ({len(chunks)} 块)")
         return doc_id
@@ -190,8 +204,11 @@ class IndexingPipeline:
         if not doc:
             return 0
 
-        # 清理 ChromaDB 向量
-        chunks_deleted = self._vector_store.delete_document(doc_id)
+        chunk_ids = [
+            row[0]
+            for row in db.query(Chunk.id).filter(Chunk.document_id == doc_id).all()
+        ]
+        chunks_deleted = self._vector_store.delete_chunks(chunk_ids)
 
         # 清理 SQLite 记录（CASCADE 自动清理 chunks 和 messages 引用）
         db.query(Chunk).filter(Chunk.document_id == doc_id).delete()
