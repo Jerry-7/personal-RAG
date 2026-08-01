@@ -62,6 +62,8 @@ export function ChatInput() {
       },
       onError: (error) => {
         console.error('Chat error:', error);
+        if (!useChatStore.getState().isStreaming) return;
+        appendToken(`生成失败：${error}`);
         finishStreaming([], crypto.randomUUID());
         setIsSending(false);
       },

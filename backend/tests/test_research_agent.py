@@ -15,6 +15,8 @@ from app.agent.loop import AgentLoop
 from app.agent.tools import ToolRegistry
 from app.db.database import Base
 from app.db.models import Conversation, Message, WebSnapshot
+from app.providers.base import AgentResponse
+from app.providers.ollama import OllamaLLMProvider
 from app.services.notes import note_service
 from app.services.web_fetcher import FetchedPage, WebFetcher
 from app.services.web_research import WebResearchService
@@ -132,6 +134,83 @@ class ToolVisibilityTests(unittest.IsolatedAsyncioTestCase):
 
         handler.assert_not_awaited()
         self.assertEqual(events[1]["data"]["status"], "failed")
+
+
+class AgentEmptyResponseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_web_search_results_stay_in_the_user_message(self):
+        registry = ToolRegistry()
+
+        async def web_search(query: str, *, context):
+            return f"candidate for {query}"
+
+        registry.register(
+            "web_search", "search", {"type": "object"}, web_search, source="web"
+        )
+
+        class Provider:
+            messages = None
+
+            async def chat_with_tools(self, *, messages, **kwargs):
+                self.messages = messages
+                return AgentResponse(content="answer")
+
+        provider = Provider()
+        loop = AgentLoop(provider=provider, max_iterations=1, tools=registry)
+        context = AgentRunContext(db=None, conversation_id="conv", mode="web")
+
+        events = [event async for event in loop.run("question", context=context)]
+
+        self.assertTrue(any(event["event"] == "token" for event in events))
+        self.assertEqual(
+            [index for index, message in enumerate(provider.messages) if message["role"] == "system"],
+            [0],
+        )
+        self.assertIn("candidate for question", provider.messages[-1]["content"])
+
+    async def test_empty_response_recovery_does_not_append_system_message(self):
+        registry = ToolRegistry()
+
+        async def local_tool():
+            return "ok"
+
+        registry.register("local", "local", {"type": "object"}, local_tool, source="builtin")
+
+        class Provider:
+            recovery_messages = None
+
+            async def chat_with_tools(self, **kwargs):
+                return AgentResponse(content="")
+
+            async def chat_stream(self, *, messages, **kwargs):
+                self.recovery_messages = messages
+                yield "recovered"
+
+        provider = Provider()
+        loop = AgentLoop(provider=provider, max_iterations=1, tools=registry)
+        context = AgentRunContext(db=None, conversation_id="conv")
+
+        events = [event async for event in loop.run("question", context=context)]
+
+        self.assertTrue(any(event.get("data") == "recovered" for event in events))
+        self.assertEqual(
+            [index for index, message in enumerate(provider.recovery_messages) if message["role"] == "system"],
+            [0],
+        )
+
+    async def test_ollama_agent_requests_disable_hidden_thinking(self):
+        provider = OllamaLLMProvider(base_url="http://localhost:11434")
+        provider._client._request = AsyncMock(return_value={
+            "message": {"content": "answer", "tool_calls": []}
+        })
+
+        response = await provider.chat_with_tools(
+            [{"role": "user", "content": "question"}],
+            [{"type": "function", "function": {"name": "search", "parameters": {}}}],
+        )
+
+        self.assertEqual(response.content, "answer")
+        payload = provider._client._request.await_args.kwargs["json"]
+        self.assertIs(payload["think"], False)
 
 
 class MigrationTests(unittest.TestCase):

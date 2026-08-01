@@ -143,7 +143,10 @@ class AgentLoop:
                 yield event
                 if event["event"] == "tool_result":
                     result = event["data"]["result"]
-                    messages.append({"role": "system", "content": f"Initial web search results:\n{result}"})
+                    messages[-1]["content"] += (
+                        "\n\nMandatory initial web search candidates:\n"
+                        f"{result}\n\nRead relevant result pages before citing them."
+                    )
 
         while iteration < self.max_iterations and not force_answer_reason:
             iteration += 1
@@ -299,15 +302,21 @@ class AgentLoop:
                 "Be honest about what you don't know."
             )
 
-        messages.append({"role": "system", "content": force_prompt})
+        if messages and messages[-1].get("role") == "user":
+            messages[-1]["content"] += f"\n\n{force_prompt}"
+        else:
+            messages.append({"role": "user", "content": force_prompt})
 
         from app.services.citation import CitationParser
 
         parser = CitationParser()
+        emitted_content = False
         async for token in self.provider.chat_stream(
             messages=messages,
             max_tokens=4096,
         ):
+            if token:
+                emitted_content = True
             citation_events = parser.feed(token)
             for evt in citation_events:
                 if evt["type"] == "token":
@@ -324,6 +333,12 @@ class AgentLoop:
             elif evt["type"] == "citation":
                 yield {"event": "citation", "data": {"index": evt["index"]}}
                 yield {"event": "token", "data": f"[{evt['index']}]"}
+
+        if not emitted_content:
+            yield {
+                "event": "error",
+                "data": {"message": "模型未返回可显示的正文，请重试或更换模型。"},
+            }
 
         # 不 yield done —— chat.py 在生成器耗尽后处理
 

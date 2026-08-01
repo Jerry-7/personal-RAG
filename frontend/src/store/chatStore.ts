@@ -73,6 +73,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   finishStreaming: (citations, messageId) => {
     const state = get();
+    if (!state.isStreaming) return;
+    const content = state.streamingText.trim();
+    if (!content) {
+      set({ isStreaming: false, streamingText: '', streamingCitations: [] });
+      return;
+    }
     const msg: MessageItem = {
       id: messageId || crypto.randomUUID(),
       role: 'assistant',
