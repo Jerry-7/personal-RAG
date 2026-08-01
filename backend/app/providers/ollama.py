@@ -22,6 +22,7 @@ from app.providers.base import (
     LLMProvider,
     LLMResponse,
     ToolCall,
+    normalize_system_messages,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,7 @@ class OllamaLLMProvider(LLMProvider):
         """
         payload: dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": normalize_system_messages(messages),
             "stream": stream,
             "think": False,
             "options": options or {},

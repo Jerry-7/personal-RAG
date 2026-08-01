@@ -25,7 +25,7 @@ from app.agent.tools import tool_registry
 from app.agent.context import AgentRunContext
 from app.config import settings
 from app.db.models import ToolExecution
-from app.providers.base import AgentResponse, LLMProvider
+from app.providers.base import AgentResponse, LLMProvider, normalize_system_messages
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,8 @@ class AgentLoop:
 
         # 添加历史对话（最近 3 轮）
         if chat_history:
-            messages.extend(chat_history[-6:])
+            messages = normalize_system_messages([*messages, *chat_history])
+            messages = [messages[0], *messages[1:][-6:]]
 
         messages.append({"role": "user", "content": question})
 

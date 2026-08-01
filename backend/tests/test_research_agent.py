@@ -158,13 +158,22 @@ class AgentEmptyResponseTests(unittest.IsolatedAsyncioTestCase):
         loop = AgentLoop(provider=provider, max_iterations=1, tools=registry)
         context = AgentRunContext(db=None, conversation_id="conv", mode="web")
 
-        events = [event async for event in loop.run("question", context=context)]
+        events = [event async for event in loop.run(
+            "question",
+            chat_history=[
+                {"role": "system", "content": "Earlier conversation summary"},
+                {"role": "user", "content": "previous question"},
+                {"role": "assistant", "content": "previous answer"},
+            ],
+            context=context,
+        )]
 
         self.assertTrue(any(event["event"] == "token" for event in events))
         self.assertEqual(
             [index for index, message in enumerate(provider.messages) if message["role"] == "system"],
             [0],
         )
+        self.assertIn("Earlier conversation summary", provider.messages[0]["content"])
         self.assertIn("candidate for question", provider.messages[-1]["content"])
 
     async def test_empty_response_recovery_does_not_append_system_message(self):
@@ -204,13 +213,22 @@ class AgentEmptyResponseTests(unittest.IsolatedAsyncioTestCase):
         })
 
         response = await provider.chat_with_tools(
-            [{"role": "user", "content": "question"}],
+            [
+                {"role": "system", "content": "primary"},
+                {"role": "user", "content": "question"},
+                {"role": "system", "content": "rolling summary"},
+            ],
             [{"type": "function", "function": {"name": "search", "parameters": {}}}],
         )
 
         self.assertEqual(response.content, "answer")
         payload = provider._client._request.await_args.kwargs["json"]
         self.assertIs(payload["think"], False)
+        self.assertEqual(
+            [index for index, message in enumerate(payload["messages"]) if message["role"] == "system"],
+            [0],
+        )
+        self.assertIn("rolling summary", payload["messages"][0]["content"])
 
 
 class MigrationTests(unittest.TestCase):

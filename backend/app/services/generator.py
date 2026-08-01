@@ -11,7 +11,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, Optional
 
 from app.config import settings
-from app.providers.base import LLMProvider
+from app.providers.base import LLMProvider, normalize_system_messages
 from app.providers.ollama import OllamaLLMProvider
 from app.services.citation import CitationParser
 
@@ -150,7 +150,8 @@ class Generator:
 
         # 添加历史对话（最近几轮）
         if chat_history:
-            messages.extend(chat_history[-6:])  # 最多保留最近 3 轮
+            messages = normalize_system_messages([*messages, *chat_history])
+            messages = [messages[0], *messages[1:][-6:]]  # 最多保留最近 3 轮
 
         messages.append({"role": "user", "content": RAG_USER_PROMPT.format(question=question)})
 

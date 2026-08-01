@@ -13,6 +13,24 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 
+def normalize_system_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge every system instruction into a single leading message."""
+    system_parts = [
+        str(message.get("content", "")).strip()
+        for message in messages
+        if message.get("role") == "system" and message.get("content")
+    ]
+    non_system = [dict(message) for message in messages if message.get("role") != "system"]
+    if not system_parts:
+        return non_system
+    return [
+        {"role": "system", "content": "\n\n".join(system_parts)},
+        *non_system,
+    ]
+
+
 @dataclass
 class LLMResponse:
     """
@@ -154,7 +172,9 @@ class LLMProvider(ABC):
             '{"tool_calls": [{"name": "tool_name", "arguments": {...}}]}\n\n'
             "After receiving tool results, continue answering naturally."
         )
-        messages = [{"role": "system", "content": system_msg}] + messages
+        messages = normalize_system_messages(
+            [{"role": "system", "content": system_msg}, *messages]
+        )
 
         response = await self.chat(messages, model, temperature, max_tokens)
         content = response.content
