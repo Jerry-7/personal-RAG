@@ -115,7 +115,7 @@ class OllamaLLMProvider(LLMProvider):
         messages: list[dict[str, str]],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 10240,
     ) -> LLMResponse:
         """
         非流式聊天生成。
@@ -148,7 +148,7 @@ class OllamaLLMProvider(LLMProvider):
         messages: list[dict[str, str]],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 10240,
     ) -> AsyncGenerator[str, None]:
         """
         流式聊天生成。
@@ -253,6 +253,90 @@ class OllamaLLMProvider(LLMProvider):
         content = msg.get("content", "")
 
         return AgentResponse(content=content)
+
+    async def chat_with_tools_stream(
+        self,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, Any]],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """
+        流式 tool calling。
+
+        使用 Ollama stream=True + tools 参数实现。
+        文本实时推送，工具调用在流结束后一次性产出（因 Ollama
+        流式模式下 tool_calls 各 chunk 返回的是完整快照而非增量）。
+        """
+        try:
+            stream = await self._client.chat(
+                model=model or self._default_model,
+                messages=messages,
+                tools=tools,
+                stream=True,
+                options={
+                    "temperature": temperature,
+                    "num_predict": max_tokens,
+                },
+            )
+        except Exception as e:
+            logger.warning(
+                "Ollama streaming tool calling failed, falling back: %s", e
+            )
+            # 回退至非流式chat_with_tools
+            response = await self.chat_with_tools(
+                messages, tools, model, temperature, max_tokens
+            )
+            if response.content:
+                yield {"type": "token", "text": response.content}
+            for tc in (response.tool_calls or []):
+                yield {
+                    "type": "tool_use",
+                    "id": tc.id, # call_{n}
+                    "name": tc.name,
+                    "arguments": tc.arguments,
+                }
+            return
+
+        final_tool_calls: dict[int, dict[str, Any]] = {}
+        async for chunk in stream:
+            msg = chunk.get("message", {})
+            content = msg.get("content", "")
+            if content:
+                yield {"type": "token", "text": content}
+
+            tc_list = msg.get("tool_calls", [])
+            for i, tc in enumerate(tc_list):
+                func = tc.get("function", tc)
+                name = func.get("name", "")
+                raw_args = func.get("arguments", {})
+
+                if isinstance(raw_args, str):
+                    try:
+                        args = _json.loads(raw_args)
+                    except _json.JSONDecodeError:
+                        args = _parse_arguments_fallback(raw_args)
+                elif isinstance(raw_args, dict):
+                    args = raw_args
+                else:
+                    args = {}
+
+                final_tool_calls[i] = {
+                    "id": f"call_{i}",
+                    "name": name,
+                    "arguments": args,
+                }
+
+        # 流结束后产出完整的工具调用
+        for i in sorted(final_tool_calls):
+            tc = final_tool_calls[i]
+            yield {
+                "type": "tool_use",
+                "id": tc["id"],
+                "name": tc["name"],
+                "arguments": tc["arguments"],
+            }
 
 
 class OllamaEmbeddingProvider(EmbeddingProvider):

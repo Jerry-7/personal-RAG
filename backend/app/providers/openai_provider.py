@@ -137,6 +137,76 @@ class OpenAILLMProvider(LLMProvider):
 
         return AgentResponse(content=msg.content or "")
 
+    async def chat_with_tools_stream(
+        self,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, Any]],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """
+        流式 tool calling。
+
+        使用 OpenAI stream=True + tools 参数。文本增量由
+        delta.content 实时推送，工具调用由 delta.tool_calls
+        逐 chunk 拼接（arguments JSON 可能跨多个 chunk）。
+        """
+        openai_tools = [
+            {"type": "function", "function": t["function"]} if "function" in t else t
+            for t in tools
+        ]
+
+        stream = await self._client.chat.completions.create(
+            model=model or self._default_model,
+            messages=messages,  # type: ignore
+            tools=openai_tools,  # type: ignore
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=True,
+        )
+
+        tool_call_accum: dict[int, dict[str, Any]] = {}
+        async for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if not delta:
+                continue
+
+            if delta.content:
+                yield {"type": "token", "text": delta.content}
+
+            if delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in tool_call_accum:
+                        tool_call_accum[idx] = {
+                            "id": "",
+                            "name": "",
+                            "arguments": "",
+                        }
+                    acc = tool_call_accum[idx]
+                    if tc_delta.id:
+                        acc["id"] = tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            acc["name"] += tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            acc["arguments"] += tc_delta.function.arguments
+
+        # 产出完整的工具调用
+        for idx in sorted(tool_call_accum):
+            acc = tool_call_accum[idx]
+            try:
+                args = _json.loads(acc["arguments"]) if acc["arguments"].strip() else {}
+            except _json.JSONDecodeError:
+                args = {}
+            yield {
+                "type": "tool_use",
+                "id": acc["id"],
+                "name": acc["name"],
+                "arguments": args,
+            }
+
 
 class OpenAIEmbeddingProvider(EmbeddingProvider):
     """
