@@ -156,6 +156,7 @@ class AgentLoop:
             "auto": "Choose whether local or web research is needed from the user's request.",
         }
         tool_list = self._build_tool_list(context)
+        # 将日期等外部因素嵌入prompt
         system_prompt = AGENT_SYSTEM_PROMPT.format(
             current_date=date.today().isoformat(),
             mode=mode,

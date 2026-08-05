@@ -39,7 +39,9 @@ Rules:
 @dataclass(frozen=True)
 class UserInputPlan:
     original_question: str
+    # 标准化后的问题
     standalone_question: str
+    # 提炼后的关键词
     search_queries: list[str] = field(default_factory=list)
     rewritten: bool = False
 
@@ -79,7 +81,7 @@ class AgentInputProcessor:
         chat = getattr(provider, "chat", None)
         if not callable(chat):
             return fallback
-
+        # 获取历史信息 标准化
         history_text = self._format_history(chat_history or [])
         request = (
             "Conversation context:\n"
@@ -88,6 +90,7 @@ class AgentInputProcessor:
             f"{original}"
         )
         try:
+            # Agent转化用户输入
             response = await chat(
                 messages=[
                     {"role": "system", "content": INPUT_REWRITE_PROMPT},
@@ -97,9 +100,11 @@ class AgentInputProcessor:
                 max_tokens=600,
             )
             data = self._parse_json_object(response.content)
+            # 获取标准化后的输入
             standalone = self._normalize(str(data.get("standalone_question", "")))
             if not standalone:
                 return fallback
+            # 获取提炼后的关键词
             queries = self._normalize_queries(data.get("search_queries"), standalone)
             return UserInputPlan(
                 original_question=original,
@@ -116,13 +121,14 @@ class AgentInputProcessor:
             )
             return fallback
 
+    # 处理空格、制表符
     @staticmethod
     def _normalize(value: str) -> str:
         value = value.strip()[: settings.agent_input_max_chars]
         lines = [re.sub(r"[ \t]+", " ", line).rstrip() for line in value.splitlines()]
         normalized = "\n".join(lines)
         return re.sub(r"\n{3,}", "\n\n", normalized).strip()
-
+    # 后续考虑按照token切片
     def _format_history(self, history: list[dict[str, str]]) -> str:
         parts: list[str] = []
         for message in history[-8:]:
@@ -131,6 +137,7 @@ class AgentInputProcessor:
                 continue
             role = str(message.get("role", "message")).upper()
             parts.append(f"<{role}>\n{content}\n</{role}>")
+            # 最大取settings.agent_input_history_max_chars个字符
         return "\n".join(parts)[-settings.agent_input_history_max_chars :]
 
     def _normalize_queries(self, value: Any, fallback: str) -> list[str]:
@@ -145,6 +152,7 @@ class AgentInputProcessor:
                 break
         return queries or [fallback]
 
+    # 解析{后的 json值
     @staticmethod
     def _parse_json_object(content: str) -> dict[str, Any]:
         decoder = json.JSONDecoder()
