@@ -30,7 +30,7 @@ from app.providers.base import AgentResponse, LLMProvider, normalize_system_mess
 logger = logging.getLogger(__name__)
 
 # Agent System Prompt 模板
-AGENT_SYSTEM_PROMPT = """You are a local-first personal research assistant.
+AGENT_SYSTEM_PROMPT = """You are personal assistant.
 You can search uploaded documents and notes, and when enabled you can search and read public web pages.
 
 ## Available Tools
