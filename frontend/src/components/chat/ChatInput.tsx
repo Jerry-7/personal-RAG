@@ -31,6 +31,7 @@ export function ChatInput() {
   const setRunId = useChatStore((s) => s.setRunId);
   const addToolCall = useChatStore((s) => s.addToolCall);
   const finishToolCall = useChatStore((s) => s.finishToolCall);
+  const isLoadingHistory = useChatStore((s) => s.isLoadingHistory);
   const documents = useDocumentStore((s) => s.documents);
   const indexedCount = documents.filter((d) => d.status === 'indexed').length;
   const indexedNoteCount = useNoteStore((s) => s.notes.filter((note) => note.index_status === 'indexed').length);
@@ -38,7 +39,7 @@ export function ChatInput() {
 
   const handleSend = useCallback(() => {
     const text = input.trim();
-    if (!text || isSending) return;
+    if (!text || isSending || isLoadingHistory) return;
 
     addUserMessage(text);
     setInput('');
@@ -78,7 +79,7 @@ export function ChatInput() {
         useSidebarStore.getState().openDraft(note);
       },
     });
-  }, [input, isSending, conversationId, mode, addUserMessage, startStreaming, appendToken, finishStreaming, setConversationId, setRunId, addToolCall, finishToolCall]);
+  }, [input, isSending, isLoadingHistory, conversationId, mode, addUserMessage, startStreaming, appendToken, finishStreaming, setConversationId, setRunId, addToolCall, finishToolCall]);
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -114,7 +115,7 @@ export function ChatInput() {
               ? '本地模式需要先上传文档或索引笔记'
               : '输入问题，按 Enter 发送'
           }
-          disabled={mode === 'local' && !hasLocalKnowledge}
+          disabled={isLoadingHistory || (mode === 'local' && !hasLocalKnowledge)}
           rows={1}
           className="flex-1 resize-none rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
           style={{ maxHeight: '120px' }}

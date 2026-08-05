@@ -6,8 +6,9 @@
  * Agent 模式附加 tool_call/tool_result 事件。
  */
 
-import type { CitationData, ChatMode, SSEDoneEvent } from '../types/chat';
+import type { CitationData, ChatMode, ConversationDetail, ConversationSummary, SSEDoneEvent } from '../types/chat';
 import type { NoteItem } from '../types/note';
+import client from './client';
 import { streamSSE } from './sse';
 
 /** Agent 工具调用步骤（前端展示用） */
@@ -104,4 +105,14 @@ export async function cancelChat(conversationId: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ conversation_id: conversationId }),
   });
+}
+
+export async function listConversations(): Promise<ConversationSummary[]> {
+  const { data } = await client.get<{ conversations: ConversationSummary[] }>('/chat/history');
+  return data.conversations;
+}
+
+export async function getConversation(conversationId: string): Promise<ConversationDetail> {
+  const { data } = await client.get<ConversationDetail>(`/chat/conversations/${conversationId}`);
+  return data;
 }

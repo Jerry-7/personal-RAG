@@ -88,4 +88,18 @@ export interface AgentStep {
   duration_ms?: number;
 }
 
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  model_provider: string;
+  model_name: string;
+  created_at: string | null;
+  updated_at: string | null;
+  message_count: number;
+}
+
+export interface ConversationDetail extends Omit<ConversationSummary, 'message_count'> {
+  messages: MessageItem[];
+}
+
 export type ChatMode = 'auto' | 'local' | 'web';

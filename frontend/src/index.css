@@ -58,7 +58,9 @@ body {
 
 @media (max-width: 767px) {
   .mobile-nav-toggle { display: inline-flex; }
+  .header-title { display: none; }
   .header-model { display: none; }
+  .header-history { width: 8rem; }
   .app-grid { display: block !important; position: relative; min-height: 0; }
   .app-main { height: 100%; min-width: 0; }
   .app-left {

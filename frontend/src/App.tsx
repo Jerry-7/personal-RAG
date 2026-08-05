@@ -4,6 +4,7 @@
  * 三栏布局：左侧导航 | 中心内容区 | 右侧引用面板
  */
 
+import { useEffect } from 'react';
 import { AppShell } from './components/layout/AppShell';
 import { ChatContainer } from './components/chat/ChatContainer';
 import { CitationSidebar } from './components/citations/CitationSidebar';
@@ -12,10 +13,33 @@ import { NoteEditor } from './components/notes/NoteEditor';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { useSettingsStore } from './store/settingsStore';
 import { useSidebarStore } from './store/sidebarStore';
+import { useChatStore } from './store/chatStore';
+import { getConversation } from './api/chat';
 
 function App() {
   const isSettingsOpen = useSettingsStore((s) => s.isSettingsOpen);
   const activeDraft = useSidebarStore((s) => s.activeDraft);
+
+  useEffect(() => {
+    const conversationId = useChatStore.getState().conversationId;
+    if (!conversationId) return;
+
+    let cancelled = false;
+    useChatStore.getState().setLoadingHistory(true);
+    void getConversation(conversationId)
+      .then((conversation) => {
+        if (!cancelled && useChatStore.getState().conversationId === conversationId) {
+          useChatStore.getState().restoreConversation(conversation.id, conversation.messages);
+        }
+      })
+      .catch(() => {
+        if (!cancelled && useChatStore.getState().conversationId === conversationId) {
+          useChatStore.getState().clearMessages();
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, []);
 
   return (
     <div className="h-screen flex flex-col bg-white dark:bg-gray-900">

@@ -22,6 +22,7 @@ interface ChatState {
   citationCounter: number;
   runId: string | null;
   agentSteps: AgentStep[];
+  isLoadingHistory: boolean;
 
   // Actions
   setConversationId: (id: string | null) => void;
@@ -32,13 +33,15 @@ interface ChatState {
   finishStreaming: (citations: CitationData[], messageId: string) => void;
   cancelStreaming: () => void;
   clearMessages: () => void;
+  setLoadingHistory: (loading: boolean) => void;
+  restoreConversation: (id: string, messages: MessageItem[]) => void;
   setRunId: (id: string) => void;
   addToolCall: (id: string, name: string, args: Record<string, unknown>) => void;
   finishToolCall: (id: string, name: string, result: string, status: 'completed' | 'failed', durationMs?: number) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
-  conversationId: null,
+  conversationId: localStorage.getItem('personal-rag.conversation-id'),
   messages: [],
   isStreaming: false,
   streamingText: '',
@@ -46,8 +49,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   citationCounter: 0,
   runId: null,
   agentSteps: [],
+  isLoadingHistory: false,
 
-  setConversationId: (id) => set({ conversationId: id }),
+  setConversationId: (id) => {
+    if (id) localStorage.setItem('personal-rag.conversation-id', id);
+    else localStorage.removeItem('personal-rag.conversation-id');
+    set({ conversationId: id });
+  },
 
   addUserMessage: (content) => {
     const msg: MessageItem = {
@@ -97,7 +105,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
   cancelStreaming: () =>
     set({ isStreaming: false, streamingText: '', streamingCitations: [] }),
 
-  clearMessages: () => set({ messages: [], conversationId: null, agentSteps: [], runId: null }),
+  clearMessages: () => {
+    localStorage.removeItem('personal-rag.conversation-id');
+    set({ messages: [], conversationId: null, agentSteps: [], runId: null, isLoadingHistory: false });
+  },
+  setLoadingHistory: (loading) => set({ isLoadingHistory: loading }),
+  restoreConversation: (id, messages) => {
+    localStorage.setItem('personal-rag.conversation-id', id);
+    set({
+      conversationId: id,
+      messages,
+      isLoadingHistory: false,
+      isStreaming: false,
+      streamingText: '',
+      streamingCitations: [],
+      agentSteps: [],
+      runId: null,
+    });
+  },
   setRunId: (id) => set({ runId: id }),
   addToolCall: (id, name, args) => set((state) => ({
     agentSteps: [...state.agentSteps, { id, type: 'tool_call', name, arguments: args, status: 'running', timestamp: Date.now() }],
