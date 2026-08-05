@@ -260,7 +260,6 @@ class ToolExecution(Base):
     iteration: Mapped[int] = mapped_column(Integer, nullable=False)
     tool_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     arguments_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
-    result_preview: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

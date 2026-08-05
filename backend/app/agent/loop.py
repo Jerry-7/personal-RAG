@@ -405,7 +405,6 @@ class AgentLoop:
         if execution:
             execution.status = "failed" if failed else "completed"
             execution.duration_ms = duration_ms
-            execution.result_preview = result[:2000]
             execution.error_message = result if failed else None
             context.db.commit()
 
