@@ -5,9 +5,7 @@
 提供基于 SSE 的流式 RAG 问答接口，整合检索、生成和引用解析。
 包含查询、对话历史管理和取消生成功能。
 
-支持两种模式：
-- Agent 模式 (agent_enabled=True): LLM 自主决策检索策略，支持多轮工具调用
-- 经典 RAG 模式 (agent_enabled=False): 固定检索→生成流水线
+聊天请求统一由 Agent 执行，支持本地检索、网页研究和多轮工具调用。
 """
 
 import asyncio
@@ -25,8 +23,6 @@ from sse_starlette.sse import EventSourceResponse
 from app.config import settings
 from app.db.database import get_db
 from app.db.models import AgentRun, Conversation, Message
-from app.services.retriever import retriever
-from app.services.generator import generator
 from app.services.conversation_memory import conversation_memory
 
 logger = logging.getLogger(__name__)
@@ -50,15 +46,14 @@ async def chat_query(
     Request body (JSON):
         - question: str  用户问题
         - conversation_id: str|null  已有对话 ID，None 则创建新对话
-        - top_k: int  检索分块数 (默认 4)
 
-    SSE events (经典模式):
+    SSE events:
         - event: token    data: {"text": "..."}
         - event: citation data: {"index": N}
         - event: done     data: {"citations": [...], "conversation_id": "...", "message_id": "..."}
         - event: error    data: {"message": "..."}
 
-    SSE events (Agent 模式，额外):
+    Additional Agent events:
         - event: tool_call   data: {"name": "...", "arguments": {...}}
         - event: tool_result data: {"name": "...", "result": "..."}
         - event: max_iterations data: {"message": "..."}
@@ -77,7 +72,6 @@ async def chat_query(
         return EventSourceResponse(_error_gen())
 
     conversation_id = body.get("conversation_id")
-    top_k = body.get("top_k", settings.final_top_k)
     mode = body.get("mode", "auto")
     if mode not in {"auto", "local", "web"}:
         async def _mode_error_gen():
@@ -130,114 +124,12 @@ async def chat_query(
 
     _cancellation_flags[conversation_id] = asyncio.Event()
 
-    # ── 根据配置选择模式 ──────────────────────────────────────
-    if settings.agent_enabled:
-        stream = _agent_event_generator(
-            question, conversation_id, db, conv, chat_history, mode, user_msg.id
-        )
-    else:
-        stream = _classic_event_generator(question, top_k, conversation_id, db, conv, chat_history)
+    # ── 启动 Agent ────────────────────────────────────────────
+    stream = _agent_event_generator(
+        question, conversation_id, db, conv, chat_history, mode, user_msg.id
+    )
 
     return EventSourceResponse(stream)
-
-
-async def _classic_event_generator(
-    question: str,
-    top_k: int,
-    conversation_id: str,
-    db: Session,
-    conv: Conversation,
-    chat_history: list[dict[str, str]],
-):
-    """
-    经典 RAG 模式事件生成器。
-
-    固定流水线：embed → 检索 → 拼 prompt → 生成。
-    保持与 v0.1 版本完全兼容。
-    """
-    retrieved_chunks = []
-    used_indices = []
-
-    try:
-        # Step 1: 检索
-        yield {"event": "token", "data": json.dumps({"text": ""})}  # 初始化连接
-        retrieved_chunks = await retriever.retrieve(question, db, top_k=top_k)
-
-        if not retrieved_chunks:
-            yield {
-                "event": "token",
-                "data": json.dumps({"text": "未在已上传文档中找到相关信息。请尝试上传相关文档后重试。"}),
-            }
-            yield {
-                "event": "done",
-                "data": json.dumps({
-                    "citations": [],
-                    "conversation_id": conversation_id,
-                    "message_id": "",
-                }),
-            }
-            return
-
-        # Step 2 & 3: 流式生成 + 引用解析
-        full_content = ""
-
-        async for event in generator.generate_stream(
-            question=question,
-            retrieved_chunks=retrieved_chunks,
-            chat_history=chat_history,
-        ):
-            # 检查取消标志
-            if conversation_id and conversation_id in _cancellation_flags:
-                if _cancellation_flags[conversation_id].is_set():
-                    full_content += " [生成已取消]"
-                    break
-
-            if event["type"] == "token":
-                full_content += event["text"]
-                yield {"event": "token", "data": json.dumps({"text": event["text"]})}
-            elif event["type"] == "citation":
-                index = event["index"]
-                if index not in used_indices:
-                    used_indices.append(index)
-                yield {"event": "citation", "data": json.dumps({"index": index})}
-
-        # Step 4: 构建引用元数据
-        citations = generator.get_citations_for_chunks(retrieved_chunks, used_indices)
-
-        # Step 5: 保存 AI 消息
-        ai_msg = Message(
-            id=str(uuid.uuid4()),
-            conversation_id=conversation_id,
-            role="assistant",
-            content=full_content,
-            citations_json=json.dumps(citations, ensure_ascii=False),
-            token_count=len(full_content) // 4,
-        )
-        db.add(ai_msg)
-        conv.updated_at = datetime.now(timezone.utc)
-        db.commit()
-        conversation_memory.update_summary(db, conversation_id)
-
-        # Step 6: 发送完成事件
-        yield {
-            "event": "done",
-            "data": json.dumps({
-                "citations": citations,
-                "conversation_id": conversation_id,
-                "message_id": ai_msg.id,
-            }, ensure_ascii=False),
-        }
-
-    except Exception as e:
-        logger.exception("Classic RAG generation failed")
-        yield {
-            "event": "error",
-            "data": json.dumps({"message": f"生成失败: {str(e)}"}),
-        }
-    finally:
-        # 清理取消标志
-        if conversation_id and conversation_id in _cancellation_flags:
-            del _cancellation_flags[conversation_id]
 
 
 async def _agent_event_generator(

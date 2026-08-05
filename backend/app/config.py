@@ -70,7 +70,6 @@ class Settings(BaseSettings):
     ]
 
     # ── Agent 配置 ────────────────────────────────────────────
-    agent_enabled: bool = True
     agent_max_iterations: int = 5
     agent_context_max_chars: int = 24000
 
