@@ -16,54 +16,99 @@ import { getNoteSource, getSourceChunk, getWebSnapshot } from '../../api/sources
 import type { NoteSourceResponse, SourceResponse, WebSourceResponse } from '../../types/source';
 
 export function CitationSidebar() {
-  const { isOpen, activeCitations, activeCitationIndex, closeSidebar, setLoading } =
+  const { isOpen, activeCitations, activeCitationIndex, isLoading, closeSidebar, setLoading } =
     useSidebarStore();
   const [sources, setSources] = useState<Map<string, SourceResponse>>(new Map());
   const [webSources, setWebSources] = useState<Map<string, WebSourceResponse>>(new Map());
   const [noteSources, setNoteSources] = useState<Map<string, NoteSourceResponse>>(new Map());
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // 当前激活的引用
   const activeCitation = activeCitations.find((c) => c.index === activeCitationIndex);
 
   useEffect(() => {
-    if (!activeCitation) return;
-
-    if (activeCitation.source_type === 'web' && activeCitation.snapshot_id) {
-      if (webSources.has(activeCitation.snapshot_id)) return;
-      setLoading(true);
-      getWebSnapshot(activeCitation.snapshot_id)
-        .then((data) => setWebSources((prev) => new Map(prev).set(activeCitation.snapshot_id!, data)))
-        .catch(console.error).finally(() => setLoading(false));
+    if (!activeCitation) {
+      setLoading(false);
       return;
     }
-    if (activeCitation.source_type === 'note' && activeCitation.source_id) {
-      if (noteSources.has(activeCitation.source_id)) return;
+
+    setLoadError(null);
+    const isWeb = Boolean(activeCitation.snapshot_id) || activeCitation.source_type === 'web';
+    const isNote = !isWeb && (Boolean(activeCitation.source_id) && activeCitation.source_type === 'note');
+
+    if (isWeb) {
+      if (!activeCitation.snapshot_id) {
+        setLoading(false);
+        setLoadError('该网页引用缺少快照信息');
+        return;
+      }
+      const snapshotId = activeCitation.snapshot_id;
+      if (webSources.has(snapshotId)) {
+        setLoading(false);
+        return;
+      }
       setLoading(true);
-      getNoteSource(activeCitation.source_id)
-        .then((data) => setNoteSources((prev) => new Map(prev).set(activeCitation.source_id!, data)))
-        .catch(console.error).finally(() => setLoading(false));
+      getWebSnapshot(snapshotId)
+        .then((data) => setWebSources((prev) => new Map(prev).set(snapshotId, data)))
+        .catch((error: unknown) => {
+          console.error(error);
+          setLoadError('网页来源加载失败，快照可能已过期或被删除');
+        }).finally(() => setLoading(false));
+      return;
+    }
+    if (isNote) {
+      const noteId = activeCitation.source_id;
+      if (!noteId) {
+        setLoading(false);
+        setLoadError('该笔记引用缺少来源信息');
+        return;
+      }
+      if (noteSources.has(noteId)) {
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      getNoteSource(noteId)
+        .then((data) => setNoteSources((prev) => new Map(prev).set(noteId, data)))
+        .catch((error: unknown) => {
+          console.error(error);
+          setLoadError('笔记来源加载失败');
+        }).finally(() => setLoading(false));
+      return;
+    }
+    if (!activeCitation.document_id || !activeCitation.chunk_id) {
+      setLoading(false);
+      setLoadError('该引用没有可用的来源信息');
       return;
     }
     const cacheKey = `${activeCitation.document_id}_${activeCitation.chunk_id}`;
-    if (sources.has(cacheKey)) return;
+    if (sources.has(cacheKey)) {
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
     getSourceChunk(activeCitation.document_id, activeCitation.chunk_id)
       .then((data) => {
         setSources((prev) => new Map(prev).set(cacheKey, data));
       })
-      .catch(console.error)
+      .catch((error: unknown) => {
+        console.error(error);
+        setLoadError('本地文档来源加载失败');
+      })
       .finally(() => setLoading(false));
   }, [activeCitation, sources, webSources, noteSources, setLoading]);
 
   if (!isOpen) return null;
 
-  const cacheKey = activeCitation
+  const isWebCitation = Boolean(activeCitation?.snapshot_id) || activeCitation?.source_type === 'web';
+  const isNoteCitation = !isWebCitation && activeCitation?.source_type === 'note';
+  const cacheKey = activeCitation && !isWebCitation && !isNoteCitation && activeCitation.document_id && activeCitation.chunk_id
     ? `${activeCitation.document_id}_${activeCitation.chunk_id}`
     : null;
   const sourceData = cacheKey ? sources.get(cacheKey) : null;
-  const webData = activeCitation?.snapshot_id ? webSources.get(activeCitation.snapshot_id) : null;
-  const noteData = activeCitation?.source_id ? noteSources.get(activeCitation.source_id) : null;
+  const webData = isWebCitation && activeCitation?.snapshot_id ? webSources.get(activeCitation.snapshot_id) : null;
+  const noteData = isNoteCitation && activeCitation?.source_id ? noteSources.get(activeCitation.source_id) : null;
 
   return (
     <div className="h-full flex flex-col">
@@ -85,7 +130,7 @@ export function CitationSidebar() {
         <div className="flex gap-1 p-2 border-b border-gray-100 dark:border-gray-800 overflow-x-auto">
           {activeCitations.map((c) => (
             <button
-              key={`${c.document_id}_${c.chunk_id}`}
+              key={c.snapshot_id || c.chunk_id || c.source_id || `citation-${c.index}`}
               onClick={() => useSidebarStore.getState().setActiveCitation(c.index)}
               className={`px-2 py-1 text-xs rounded-full shrink-0 transition-colors ${
                 c.index === activeCitationIndex
@@ -101,9 +146,15 @@ export function CitationSidebar() {
 
       {/* 内容 */}
       <div className="flex-1 overflow-y-auto">
-        {!sourceData && !webData && !noteData && (
+        {isLoading && !sourceData && !webData && !noteData && !loadError && (
           <div className="flex items-center justify-center h-32 text-sm text-gray-400">
             加载中...
+          </div>
+        )}
+
+        {loadError && !sourceData && !webData && !noteData && (
+          <div className="flex h-32 items-center justify-center px-6 text-center text-sm text-red-500">
+            {loadError}
           </div>
         )}
 

@@ -38,12 +38,14 @@ export const useSidebarStore = create<SidebarState>((set, get) => ({
 
   openSource: (citation) => {
     const state = get();
-    // 避免重复添加同一引用
-    const sourceKey = citation.snapshot_id || citation.chunk_id || citation.source_id;
-    const existing = state.activeCitations.filter((c) => (c.snapshot_id || c.chunk_id || c.source_id) === sourceKey);
-    const citations = existing.length > 0
-      ? state.activeCitations
-      : [...state.activeCitations, citation];
+    const sourceKey = citation.snapshot_id || citation.chunk_id || citation.source_id || `citation-${citation.index}`;
+    const citations = [
+      ...state.activeCitations.filter((item) => {
+        const itemKey = item.snapshot_id || item.chunk_id || item.source_id || `citation-${item.index}`;
+        return item.index !== citation.index && itemKey !== sourceKey;
+      }),
+      citation,
+    ];
     set({
       isOpen: true,
       activeCitations: citations,
@@ -55,7 +57,7 @@ export const useSidebarStore = create<SidebarState>((set, get) => ({
   setActiveCitation: (index) => set({ activeCitationIndex: index }),
 
   closeSidebar: () =>
-    set({ isOpen: false, activeCitations: [], activeCitationIndex: null, activeDraft: null }),
+    set({ isOpen: false, activeCitations: [], activeCitationIndex: null, activeDraft: null, isLoading: false }),
 
   setLoading: (loading) => set({ isLoading: loading }),
   openDraft: (note) => set({ isOpen: true, activeDraft: note, activeCitations: [], activeCitationIndex: null }),

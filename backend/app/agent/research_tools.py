@@ -23,9 +23,15 @@ async def _web_search(
     )
     if not results:
         return "网页搜索没有返回结果。"
-    lines = ["网页搜索候选（需要读取正文后才能作为可靠引用）:"]
+    lines = [
+        "网页搜索候选（不可直接引用；必须先用 fetch_web_page 读取正文，"
+        "并使用该工具返回的 [N]）:"
+    ]
     for index, result in enumerate(results, start=1):
-        lines.append(f"{index}. {result.title}\nURL: {result.url}\n摘要: {result.snippet[:500]}")
+        lines.append(
+            f"[W{index}](<{result.url}>) 候选链接（非正式引用）: {result.title}\n"
+            f"搜索摘要（非证据）: {result.snippet[:500]}"
+        )
     return "\n\n".join(lines)
 
 

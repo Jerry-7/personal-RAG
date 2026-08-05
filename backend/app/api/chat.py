@@ -28,6 +28,8 @@ from app.services.conversation_memory import conversation_memory
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+STREAM_CHARACTER_DELAY_SECONDS = 0.006
+
 # 取消生成的事件标志 (key: conversation_id)
 _cancellation_flags: dict[str, asyncio.Event] = {}
 
@@ -178,7 +180,8 @@ async def _agent_event_generator(
     # 创建 Agent 循环
     agent = AgentLoop(provider=llm_provider)
 
-    used_indices: list[int] = []
+    citation_index_map: dict[int, int] = {}
+    pending_citation_token: tuple[int, int | None] | None = None
     full_content = ""
     run_error_message = ""
 
@@ -205,18 +208,39 @@ async def _agent_event_generator(
             data = event.get("data", "")
 
             if evt_type == "token":
-                # 文本 token（来自最终回答的流式输出）
-                # AgentLoop 的 token data 是裸字符串，包装为前端期望的格式
                 token_text = data if isinstance(data, str) else data.get("text", "")
+                if pending_citation_token is not None:
+                    raw_index, display_index = pending_citation_token
+                    if token_text == f"[{raw_index}]":
+                        token_text = f"[{display_index}]" if display_index is not None else ""
+                    pending_citation_token = None
+                if not token_text:
+                    continue
                 full_content += token_text
-                yield {"event": "token", "data": json.dumps({"text": token_text})}
+                is_citation_marker = bool(re.fullmatch(r"\[\d+\]", token_text))
+                chunks = [token_text] if is_citation_marker else token_text
+                for character in chunks:
+                    yield {"event": "token", "data": json.dumps({"text": character})}
+                    if not is_citation_marker:
+                        await asyncio.sleep(STREAM_CHARACTER_DELAY_SECONDS)
                 continue
 
             elif evt_type == "citation":
-                # 引用标记 [N]
                 idx = data.get("index", 0) if isinstance(data, dict) else data
-                if isinstance(idx, int) and idx not in used_indices:
-                    used_indices.append(idx)
+                registered_indices = {item["index"] for item in run_context.citations}
+                if isinstance(idx, int) and idx in registered_indices:
+                    if idx not in citation_index_map:
+                        citation_index_map[idx] = len(citation_index_map) + 1
+                    display_index = citation_index_map[idx]
+                    pending_citation_token = (idx, display_index)
+                    yield {
+                        "event": "citation",
+                        "data": json.dumps({"index": display_index}),
+                    }
+                else:
+                    logger.warning("Dropping unregistered citation index: %r", idx)
+                    pending_citation_token = (idx, None) if isinstance(idx, int) else None
+                continue
 
             elif evt_type == "tool_call":
                 # Agent 调用工具
@@ -254,19 +278,12 @@ async def _agent_event_generator(
             all_registered = run_context.citations
             registered_by_index = {c["index"]: c for c in all_registered}
             citations = [
-                registered_by_index[idx]
-                for idx in sorted(used_indices)
-                if idx in registered_by_index
+                {**registered_by_index[raw_index], "index": display_index}
+                for raw_index, display_index in sorted(
+                    citation_index_map.items(), key=lambda item: item[1]
+                )
+                if raw_index in registered_by_index
             ]
-
-            # 兜底：如果 LLM 使用了引用但注册表中找不到对应编号，
-            # 保留空的兜底条目（前端至少能显示引用标记）
-            for idx in sorted(used_indices):
-                if idx not in registered_by_index:
-                    citations.append({
-                        "index": idx, "document_id": "", "chunk_id": "",
-                        "snippet": f"来源 [{idx}]", "filename": "", "source_type": "text",
-                    })
 
             ai_msg = Message(
                 id=str(uuid.uuid4()),
