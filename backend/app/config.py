@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     # ── Agent 配置 ────────────────────────────────────────────
     agent_max_iterations: int = 5
     agent_context_max_chars: int = 24000
+    agent_input_rewrite_enabled: bool = True
+    agent_input_max_chars: int = 12000
+    agent_input_history_max_chars: int = 12000
 
     # ── Web research ─────────────────────────────────────────
     searxng_base_url: str = "http://127.0.0.1:8888"

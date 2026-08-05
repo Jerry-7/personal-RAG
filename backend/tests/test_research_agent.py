@@ -11,11 +11,12 @@ from alembic.operations import Operations
 from sqlalchemy.orm import sessionmaker
 
 from app.agent.context import AgentRunContext
+from app.agent.input_processor import AgentInputProcessor, UserInputPlan
 from app.agent.loop import AgentLoop
 from app.agent.tools import ToolRegistry
 from app.db.database import Base
 from app.db.models import Conversation, Message, WebSnapshot
-from app.providers.base import AgentResponse
+from app.providers.base import AgentResponse, LLMResponse
 from app.providers.ollama import OllamaLLMProvider
 from app.services.notes import note_service
 from app.services.web_fetcher import FetchedPage, WebFetcher
@@ -136,7 +137,90 @@ class ToolVisibilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[1]["data"]["status"], "failed")
 
 
+class AgentInputProcessorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rewrite_resolves_follow_up_and_builds_search_queries(self):
+        class Provider:
+            async def chat(self, **kwargs):
+                return LLMResponse(content=json.dumps({
+                    "standalone_question": "修复网络搜索引用索引不连续的问题",
+                    "search_queries": ["网络搜索 引用索引 不连续", "citation index mapping"],
+                }, ensure_ascii=False))
+
+        plan = await AgentInputProcessor().optimize(
+            Provider(),
+            "修复这个问题",
+            [{"role": "user", "content": "网络搜索的引用索引不连续"}],
+        )
+
+        self.assertTrue(plan.rewritten)
+        self.assertEqual(plan.original_question, "修复这个问题")
+        self.assertEqual(plan.standalone_question, "修复网络搜索引用索引不连续的问题")
+        self.assertEqual(plan.primary_search_query, "网络搜索 引用索引 不连续")
+
+    async def test_invalid_rewrite_falls_back_to_normalized_original(self):
+        class Provider:
+            async def chat(self, **kwargs):
+                return LLMResponse(content="not json")
+
+        plan = await AgentInputProcessor().optimize(
+            Provider(), "  保留   原意\n\n\n并继续  "
+        )
+
+        self.assertFalse(plan.rewritten)
+        self.assertEqual(plan.original_question, "保留 原意\n\n并继续")
+        self.assertEqual(plan.standalone_question, plan.original_question)
+
+
 class AgentEmptyResponseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_web_mode_uses_rewritten_query_but_keeps_original_request(self):
+        registry = ToolRegistry()
+        searched_queries = []
+
+        async def web_search(query: str, *, context):
+            searched_queries.append(query)
+            return "[W1] candidate"
+
+        registry.register(
+            "web_search", "search", {"type": "object"}, web_search, source="web"
+        )
+
+        class Processor:
+            async def optimize(self, provider, question, chat_history):
+                return UserInputPlan(
+                    original_question=question,
+                    standalone_question="standalone request",
+                    search_queries=["optimized search query"],
+                    rewritten=True,
+                )
+
+        class Provider:
+            messages = None
+
+            async def chat_with_tools(self, *, messages, **kwargs):
+                self.messages = messages
+                return AgentResponse(content="answer")
+
+        provider = Provider()
+        loop = AgentLoop(
+            provider=provider,
+            max_iterations=1,
+            tools=registry,
+            input_processor=Processor(),
+        )
+        context = AgentRunContext(db=None, conversation_id="conv", mode="web")
+
+        events = [event async for event in loop.run("original request", context=context)]
+
+        self.assertTrue(any(event["event"] == "token" for event in events))
+        self.assertEqual(searched_queries, ["optimized search query"])
+        self.assertIn(
+            "Original user request (authoritative):\noriginal request",
+            provider.messages[-1]["content"],
+        )
+        self.assertIn("Context-resolved request", provider.messages[-1]["content"])
+        self.assertIn("[W1]", provider.messages[0]["content"])
+        self.assertIn("never citations", provider.messages[0]["content"])
+
     async def test_web_search_results_stay_in_the_user_message(self):
         registry = ToolRegistry()
 
