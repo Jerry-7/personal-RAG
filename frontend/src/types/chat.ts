@@ -42,6 +42,7 @@ export type SSEEventType =
   | 'tool_result'
   | 'max_iterations'
   | 'run_started'
+  | 'route_selected'
   | 'source'
   | 'note_draft';
 
@@ -86,6 +87,17 @@ export interface AgentStep {
   id?: string;
   status?: 'running' | 'completed' | 'failed';
   duration_ms?: number;
+}
+
+export interface RouteSelection {
+  agent_profile: string;
+  tier: 'fast' | 'standard' | 'expert';
+  route: 'direct' | 'tool_agent' | 'supervisor';
+  score: number;
+  reasons: string[];
+  requires_decomposition: boolean;
+  max_children: number;
+  max_depth: number;
 }
 
 export interface ConversationSummary {

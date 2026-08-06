@@ -5,7 +5,7 @@
  */
 
 import { create } from 'zustand';
-import type { AgentStep, CitationData, MessageItem } from '../types/chat';
+import type { AgentStep, CitationData, MessageItem, RouteSelection } from '../types/chat';
 
 interface ChatState {
   /** 当前对话 ID */
@@ -21,6 +21,7 @@ interface ChatState {
   /** 流式消息引用计数器（用于内联标记） */
   citationCounter: number;
   runId: string | null;
+  routeSelection: RouteSelection | null;
   agentSteps: AgentStep[];
   isLoadingHistory: boolean;
 
@@ -36,6 +37,7 @@ interface ChatState {
   setLoadingHistory: (loading: boolean) => void;
   restoreConversation: (id: string, messages: MessageItem[]) => void;
   setRunId: (id: string) => void;
+  setRouteSelection: (selection: RouteSelection) => void;
   addToolCall: (id: string, name: string, args: Record<string, unknown>) => void;
   finishToolCall: (id: string, name: string, result: string, status: 'completed' | 'failed', durationMs?: number) => void;
 }
@@ -48,6 +50,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingCitations: [],
   citationCounter: 0,
   runId: null,
+  routeSelection: null,
   agentSteps: [],
   isLoadingHistory: false,
 
@@ -69,7 +72,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   startStreaming: () =>
-    set({ isStreaming: true, streamingText: '', streamingCitations: [], citationCounter: 0, agentSteps: [], runId: null }),
+    set({ isStreaming: true, streamingText: '', streamingCitations: [], citationCounter: 0, agentSteps: [], runId: null, routeSelection: null }),
 
   appendToken: (text) =>
     set((s) => ({ streamingText: s.streamingText + text })),
@@ -107,7 +110,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   clearMessages: () => {
     localStorage.removeItem('personal-rag.conversation-id');
-    set({ messages: [], conversationId: null, agentSteps: [], runId: null, isLoadingHistory: false });
+    set({ messages: [], conversationId: null, agentSteps: [], runId: null, routeSelection: null, isLoadingHistory: false });
   },
   setLoadingHistory: (loading) => set({ isLoadingHistory: loading }),
   restoreConversation: (id, messages) => {
@@ -121,9 +124,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingCitations: [],
       agentSteps: [],
       runId: null,
+      routeSelection: null,
     });
   },
   setRunId: (id) => set({ runId: id }),
+  setRouteSelection: (selection) => set({ routeSelection: selection }),
   addToolCall: (id, name, args) => set((state) => ({
     agentSteps: [...state.agentSteps, { id, type: 'tool_call', name, arguments: args, status: 'running', timestamp: Date.now() }],
   })),

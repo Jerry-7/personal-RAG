@@ -151,25 +151,41 @@ async def _agent_event_generator(
     """
     from app.agent.loop import AgentLoop
     from app.agent.context import AgentRunContext
+    from app.agent.routing import ComplexityRouter, build_default_agent_registry
     from app.services.generator import generator as gen_service
 
     cancellation_event = _cancellation_flags.setdefault(conversation_id, asyncio.Event())
+    route_decision = ComplexityRouter().route(
+        question,
+        mode=mode,
+        history=chat_history,
+    )
+    agent_profile = build_default_agent_registry().for_decision(route_decision)
+    # 构建数据库AgentRun对象
     agent_run = AgentRun(
         conversation_id=conversation_id,
         user_message_id=user_message_id,
         mode=mode,
+        agent_profile=agent_profile.name,
+        route_tier=route_decision.tier,
+        route_name=route_decision.route,
+        route_score=route_decision.score,
+        route_reasons_json=json.dumps(route_decision.reasons),
+        route_requires_decomposition=route_decision.requires_decomposition,
         status="running",
         web_page_budget=settings.web_page_budget,
         max_depth=settings.web_crawl_max_depth,
     )
     db.add(agent_run)
     db.commit()
+    # 构建上下文
     run_context = AgentRunContext(
         db=db,
         conversation_id=conversation_id,
         run_id=agent_run.id,
         mode=mode,
         cancellation_event=cancellation_event,
+        allowed_tool_sources=agent_profile.allowed_tool_sources,
         web_page_budget=agent_run.web_page_budget,
         max_crawl_depth=agent_run.max_depth,
     )
@@ -178,8 +194,12 @@ async def _agent_event_generator(
     llm_provider = await gen_service._get_provider()
 
     # 创建 Agent 循环
-    agent = AgentLoop(provider=llm_provider)
+    agent = AgentLoop(
+        provider=llm_provider,
+        max_iterations=agent_profile.max_iterations,
+    )
 
+    # [regist_citation_index, display_citation_index]
     citation_index_map: dict[int, int] = {}
     pending_citation_token: tuple[int, int | None] | None = None
     full_content = ""
@@ -198,6 +218,14 @@ async def _agent_event_generator(
         }
 
         # 运行 Agent 循环
+        yield {
+            "event": "route_selected",
+            "data": json.dumps({
+                **route_decision.to_dict(),
+                "agent_profile": agent_profile.name,
+            }, ensure_ascii=False),
+        }
+
         async for event in agent.run(
             question=question,
             conversation_id=conversation_id,
@@ -208,6 +236,7 @@ async def _agent_event_generator(
             data = event.get("data", "")
 
             if evt_type == "token":
+                # 将raw_index 转换为display_index
                 token_text = data if isinstance(data, str) else data.get("text", "")
                 if pending_citation_token is not None:
                     raw_index, display_index = pending_citation_token

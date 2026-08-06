@@ -204,6 +204,12 @@ class AgentLoop:
 
             # Step 1: LLM 决策
             excluded_sources = {"web"} if context and context.mode == "local" else set()
+            if context and context.allowed_tool_sources is not None:
+                excluded_sources.update(
+                    tool.source
+                    for tool in self.tools.list_all()
+                    if tool.source not in context.allowed_tool_sources
+                )
             tools_schema = self.tools.to_openai_format(exclude_sources=excluded_sources)
             if not tools_schema:
                 # 没有工具可用，直接使用已有对话生成最终回答
@@ -380,6 +386,12 @@ class AgentLoop:
     def _build_tool_list(self, context: AgentRunContext | None = None) -> str:
         """构建供 system prompt 显示的工具列表。"""
         excluded_sources = {"web"} if context and context.mode == "local" else set()
+        if context and context.allowed_tool_sources is not None:
+            excluded_sources.update(
+                tool.source
+                for tool in self.tools.list_all()
+                if tool.source not in context.allowed_tool_sources
+            )
         tools = self.tools.list_all(exclude_sources=excluded_sources)
         if not tools:
             return "(No tools available)"
@@ -423,7 +435,9 @@ class AgentLoop:
         started = time.perf_counter()
         source_count = len(context.citations) if context else 0
         tool = self.tools.get(name)
-        if context and context.mode == "local" and tool and tool.source == "web":
+        if context and tool and not context.can_use_tool_source(tool.source):
+            result = "Tool execution failed: this Agent profile does not allow this tool"
+        elif context and context.mode == "local" and tool and tool.source == "web":
             result = "Tool execution failed: network tools are disabled in local mode"
         else:
             result = await self.tools.execute(name, arguments, context=context)

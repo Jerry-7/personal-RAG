@@ -14,6 +14,7 @@ class AgentRunContext:
     conversation_id: str
     run_id: str = ""
     mode: str = "auto"
+    allowed_tool_sources: frozenset[str] | None = None
     cancellation_event: Any | None = None
     citations: list[dict[str, Any]] = field(default_factory=list)
     citation_counter: int = 0
@@ -35,3 +36,7 @@ class AgentRunContext:
 
     def can_fetch_page(self) -> bool:
         return self.web_pages_used < self.web_page_budget
+
+    def can_use_tool_source(self, source: str) -> bool:
+        """Return whether the selected Agent profile may use a tool source."""
+        return self.allowed_tool_sources is None or source in self.allowed_tool_sources
