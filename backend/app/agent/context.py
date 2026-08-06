@@ -13,6 +13,7 @@ class AgentRunContext:
     db: Session
     conversation_id: str
     run_id: str = ""
+    goal_node_id: str = ""
     mode: str = "auto"
     allowed_tool_sources: frozenset[str] | None = None
     agent_profile: str = "standard_research"

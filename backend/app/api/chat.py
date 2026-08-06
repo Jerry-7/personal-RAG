@@ -185,11 +185,20 @@ async def _agent_event_generator(
         agent_profile=agent_profile.name,
         input_data={"question": question, "mode": mode},
     )
+    agent_goal, agent_goal_events = goal_runtime.create_child(
+        parent=root_goal,
+        title="执行用户请求",
+        kind="agent",
+        agent_profile=agent_profile.name,
+        input_data={"question": question, "route": route_decision.route},
+    )
+    initial_goal_events.extend(agent_goal_events)
     # 构建上下文
     run_context = AgentRunContext(
         db=db,
         conversation_id=conversation_id,
         run_id=agent_run.id,
+        goal_node_id=agent_goal.id,
         mode=mode,
         cancellation_event=cancellation_event,
         allowed_tool_sources=agent_profile.allowed_tool_sources,
@@ -347,16 +356,25 @@ async def _agent_event_generator(
             agent_run.completed_at = datetime.now(timezone.utc)
             db.commit()
             conversation_memory.update_summary(db, conversation_id)
-            goal_event = goal_runtime.transition(
-                root_goal,
-                agent_run.status,
-                output={"message_id": ai_msg.id},
-                error_message=agent_run.error_message,
-            )
-            yield {
-                "event": goal_event.event_type,
-                "data": json.dumps(serialize_event(goal_event), ensure_ascii=False),
-            }
+            goal_events = [
+                goal_runtime.transition(
+                    agent_goal,
+                    agent_run.status,
+                    output={"message_id": ai_msg.id},
+                    error_message=agent_run.error_message,
+                ),
+                goal_runtime.transition(
+                    root_goal,
+                    agent_run.status,
+                    output={"message_id": ai_msg.id},
+                    error_message=agent_run.error_message,
+                ),
+            ]
+            for goal_event in goal_events:
+                yield {
+                    "event": goal_event.event_type,
+                    "data": json.dumps(serialize_event(goal_event), ensure_ascii=False),
+                }
 
             # 发送完成事件
             yield {
@@ -375,16 +393,25 @@ async def _agent_event_generator(
             agent_run.web_pages_used = run_context.web_pages_used
             agent_run.completed_at = datetime.now(timezone.utc)
             db.commit()
-            goal_event = goal_runtime.transition(
-                root_goal,
-                agent_run.status,
-                output={"message_id": ""},
-                error_message=agent_run.error_message,
-            )
-            yield {
-                "event": goal_event.event_type,
-                "data": json.dumps(serialize_event(goal_event), ensure_ascii=False),
-            }
+            goal_events = [
+                goal_runtime.transition(
+                    agent_goal,
+                    agent_run.status,
+                    output={"message_id": ""},
+                    error_message=agent_run.error_message,
+                ),
+                goal_runtime.transition(
+                    root_goal,
+                    agent_run.status,
+                    output={"message_id": ""},
+                    error_message=agent_run.error_message,
+                ),
+            ]
+            for goal_event in goal_events:
+                yield {
+                    "event": goal_event.event_type,
+                    "data": json.dumps(serialize_event(goal_event), ensure_ascii=False),
+                }
             yield {
                 "event": "done",
                 "data": json.dumps({
@@ -402,16 +429,17 @@ async def _agent_event_generator(
         agent_run.web_pages_used = run_context.web_pages_used
         agent_run.completed_at = datetime.now(timezone.utc)
         db.commit()
-        if root_goal.status == "running":
-            goal_event = goal_runtime.transition(
-                root_goal,
-                "failed",
-                error_message=str(e),
-            )
-            yield {
-                "event": goal_event.event_type,
-                "data": json.dumps(serialize_event(goal_event), ensure_ascii=False),
-            }
+        for goal in (agent_goal, root_goal):
+            if goal.status == "running":
+                goal_event = goal_runtime.transition(
+                    goal,
+                    "failed",
+                    error_message=str(e),
+                )
+                yield {
+                    "event": goal_event.event_type,
+                    "data": json.dumps(serialize_event(goal_event), ensure_ascii=False),
+                }
         yield {
             "event": "error",
             "data": json.dumps({"message": f"Agent 生成失败: {str(e)}"}),

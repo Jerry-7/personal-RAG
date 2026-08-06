@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Globe2, Loader2, Route, Search, Target, XCircle } from 'lucide-react';
+import { Bot, Check, ChevronDown, ChevronRight, Globe2, Loader2, Route, Search, Target, XCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useChatStore } from '../../store/chatStore';
@@ -46,9 +46,9 @@ export function ActivityTimeline() {
       </button>
       {expanded && <div className="space-y-2 pb-2">
         {goalNodes.map((goal) => (
-          <div key={goal.id} className="text-xs text-gray-600 dark:text-gray-400">
+          <div key={goal.id} className={`${goal.parent_id ? 'ml-4' : ''} text-xs text-gray-600 dark:text-gray-400`}>
             <div className="flex items-center gap-2">
-              <Target className="h-3.5 w-3.5" />
+              {goal.kind === 'agent' ? <Bot className="h-3.5 w-3.5" /> : <Target className="h-3.5 w-3.5" />}
               <span className="flex-1 truncate" title={goal.title}>{goal.title}</span>
               <span className="text-[10px] text-gray-400">{goal.agent_profile}</span>
               {goal.status === 'running' ? (

@@ -46,3 +46,22 @@ class GoalRuntimeTests(unittest.TestCase):
         runtime.transition(goal, "cancelled")
         with self.assertRaises(ValueError):
             runtime.transition(goal, "running")
+
+    def test_child_goal_is_ordered_under_root(self):
+        runtime = GoalRuntime(self.db, "run-3")
+        root, _ = runtime.create_root(
+            title="复杂任务",
+            agent_profile="expert_supervisor",
+            input_data={},
+        )
+        child, events = runtime.create_child(
+            parent=root,
+            title="执行研究",
+            kind="agent",
+            agent_profile="standard_research",
+            input_data={"route": "tool_agent"},
+        )
+
+        self.assertEqual(child.parent_id, root.id)
+        self.assertEqual(child.status, "running")
+        self.assertEqual([event.sequence for event in events], [3, 4])

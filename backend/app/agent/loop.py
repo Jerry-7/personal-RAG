@@ -428,6 +428,7 @@ class AgentLoop:
         if context and context.run_id:
             execution = ToolExecution(
                 run_id=context.run_id,
+                node_id=context.goal_node_id or None,
                 iteration=iteration,
                 tool_name=name,
                 arguments_json=json.dumps(arguments, ensure_ascii=False),

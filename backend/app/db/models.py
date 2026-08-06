@@ -307,6 +307,9 @@ class ToolExecution(Base):
     run_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    node_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("goal_nodes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     iteration: Mapped[int] = mapped_column(Integer, nullable=False)
     tool_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     arguments_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")

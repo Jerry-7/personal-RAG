@@ -46,6 +46,7 @@ async def get_research_run(run_id: str, db: Session = Depends(get_db)):
         "events": [serialize_event(item) for item in events],
         "tools": [{
             "id": item.id,
+            "node_id": item.node_id,
             "name": item.tool_name,
             "arguments": json.loads(item.arguments_json or "{}"),
             "status": item.status,

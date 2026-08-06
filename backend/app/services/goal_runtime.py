@@ -64,6 +64,12 @@ class GoalRuntime:
             .scalar()
             or 0
         )
+        self._node_sequence = int(
+            db.query(func.max(GoalNode.sequence))
+            .filter(GoalNode.run_id == run_id)
+            .scalar()
+            or 0
+        )
 
     def create_root(
         self,
@@ -79,6 +85,37 @@ class GoalRuntime:
             status="pending",
             agent_profile=agent_profile,
             sequence=0,
+            input_json=json.dumps(input_data, ensure_ascii=False),
+        )
+        self.db.add(node)
+        self.db.flush()
+        created = self._record("goal_created", node)
+        started = self.transition(node, "running", commit=False)
+        self.db.commit()
+        return node, [created, started]
+
+    def create_child(
+        self,
+        *,
+        parent: GoalNode,
+        title: str,
+        kind: str,
+        agent_profile: str,
+        input_data: dict[str, Any],
+        dependencies: list[str] | None = None,
+    ) -> tuple[GoalNode, list[RunEvent]]:
+        if parent.run_id != self.run_id:
+            raise ValueError("Parent goal belongs to a different run")
+        self._node_sequence += 1
+        node = GoalNode(
+            run_id=self.run_id,
+            parent_id=parent.id,
+            title=title[:512],
+            kind=kind,
+            status="pending",
+            agent_profile=agent_profile,
+            sequence=self._node_sequence,
+            dependencies_json=json.dumps(dependencies or []),
             input_json=json.dumps(input_data, ensure_ascii=False),
         )
         self.db.add(node)
