@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Globe2, Loader2, Route, Search, XCircle } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Globe2, Loader2, Route, Search, Target, XCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useChatStore } from '../../store/chatStore';
@@ -33,10 +33,11 @@ export function ActivityTimeline() {
   const [expanded, setExpanded] = useState(false);
   const steps = useChatStore((state) => state.agentSteps);
   const routeSelection = useChatStore((state) => state.routeSelection);
+  const goalNodes = useChatStore((state) => state.goalNodes);
   const isStreaming = useChatStore((state) => state.isStreaming);
-  if (!steps.length && !routeSelection) return null;
+  if (!steps.length && !routeSelection && !goalNodes.length) return null;
   const running = isStreaming || steps.some((step) => step.status === 'running');
-  const activityCount = steps.length + (routeSelection ? 1 : 0);
+  const activityCount = steps.length + goalNodes.length + (routeSelection ? 1 : 0);
   return (
     <div className="ml-11 max-w-[80%] border-l-2 border-gray-200 pl-3 dark:border-gray-700">
       <button onClick={() => setExpanded(!expanded)} className="flex h-8 items-center gap-2 text-xs text-gray-500">
@@ -44,6 +45,23 @@ export function ActivityTimeline() {
         {running ? '正在执行' : `执行活动 · ${activityCount} 项`}
       </button>
       {expanded && <div className="space-y-2 pb-2">
+        {goalNodes.map((goal) => (
+          <div key={goal.id} className="text-xs text-gray-600 dark:text-gray-400">
+            <div className="flex items-center gap-2">
+              <Target className="h-3.5 w-3.5" />
+              <span className="flex-1 truncate" title={goal.title}>{goal.title}</span>
+              <span className="text-[10px] text-gray-400">{goal.agent_profile}</span>
+              {goal.status === 'running' ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : goal.status === 'failed' || goal.status === 'cancelled' ? (
+                <XCircle className="h-3.5 w-3.5 text-red-500" />
+              ) : (
+                <Check className="h-3.5 w-3.5 text-green-600" />
+              )}
+            </div>
+            {goal.error_message && <p className="ml-5 mt-1 text-[10px] text-red-500">{goal.error_message}</p>}
+          </div>
+        ))}
         {routeSelection && (
           <div className="text-xs text-gray-600 dark:text-gray-400">
             <div className="flex items-center gap-2">

@@ -6,7 +6,7 @@
  * Agent 模式附加 tool_call/tool_result 事件。
  */
 
-import type { CitationData, ChatMode, ConversationDetail, ConversationSummary, RouteSelection, SSEDoneEvent } from '../types/chat';
+import type { CitationData, ChatMode, ConversationDetail, ConversationSummary, RouteSelection, RunEventData, SSEDoneEvent } from '../types/chat';
 import type { NoteItem } from '../types/note';
 import client from './client';
 import { streamSSE } from './sse';
@@ -34,6 +34,7 @@ export interface ChatStreamCallbacks {
   onMaxIterations?: (message: string) => void;
   onRunStarted?: (runId: string, conversationId: string) => void;
   onRouteSelected?: (selection: RouteSelection) => void;
+  onGoalEvent?: (event: RunEventData) => void;
   onSource?: (source: CitationData) => void;
   onNoteDraft?: (note: NoteItem) => void;
 }
@@ -89,6 +90,13 @@ export function streamChatQuery(
                   break;
                 case 'route_selected':
                   callbacks.onRouteSelected?.(data as unknown as RouteSelection);
+                  break;
+                case 'goal_created':
+                case 'goal_running':
+                case 'goal_completed':
+                case 'goal_failed':
+                case 'goal_cancelled':
+                  callbacks.onGoalEvent?.(data as unknown as RunEventData);
                   break;
                 case 'source':
                   callbacks.onSource?.(data as unknown as CitationData);

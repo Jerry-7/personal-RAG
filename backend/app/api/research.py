@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-from app.db.models import AgentRun, ResearchRunSnapshot, ToolExecution, WebSnapshot
+from app.db.models import AgentRun, GoalNode, ResearchRunSnapshot, RunEvent, ToolExecution, WebSnapshot
+from app.services.goal_runtime import serialize_event, serialize_goal
 from app.services.web_search import search_provider
 
 router = APIRouter()
@@ -16,6 +17,8 @@ async def get_research_run(run_id: str, db: Session = Depends(get_db)):
     if not run:
         raise HTTPException(status_code=404, detail="研究运行不存在")
     executions = db.query(ToolExecution).filter(ToolExecution.run_id == run_id).order_by(ToolExecution.created_at).all()
+    goals = db.query(GoalNode).filter(GoalNode.run_id == run_id).order_by(GoalNode.sequence).all()
+    events = db.query(RunEvent).filter(RunEvent.run_id == run_id).order_by(RunEvent.sequence).all()
     snapshots = (
         db.query(WebSnapshot).join(ResearchRunSnapshot, ResearchRunSnapshot.snapshot_id == WebSnapshot.id)
         .filter(ResearchRunSnapshot.run_id == run_id).all()
@@ -39,6 +42,8 @@ async def get_research_run(run_id: str, db: Session = Depends(get_db)):
         "error_message": run.error_message,
         "started_at": run.started_at,
         "completed_at": run.completed_at,
+        "goals": [serialize_goal(item) for item in goals],
+        "events": [serialize_event(item) for item in events],
         "tools": [{
             "id": item.id,
             "name": item.tool_name,

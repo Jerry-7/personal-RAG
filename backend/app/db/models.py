@@ -256,6 +256,50 @@ class AgentRun(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class GoalNode(Base):
+    __tablename__ = "goal_nodes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    run_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    parent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("goal_nodes.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="root")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
+    agent_profile: Mapped[str] = mapped_column(String(64), nullable=False, default="standard_research")
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    dependencies_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    input_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    output_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, server_default=func.now()
+    )
+
+
+class RunEvent(Base):
+    __tablename__ = "run_events"
+    __table_args__ = (UniqueConstraint("run_id", "sequence", name="uq_run_event_sequence"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    run_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    node_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("goal_nodes.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, server_default=func.now())
+
+
 class ToolExecution(Base):
     __tablename__ = "tool_executions"
 

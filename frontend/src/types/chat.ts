@@ -43,6 +43,11 @@ export type SSEEventType =
   | 'max_iterations'
   | 'run_started'
   | 'route_selected'
+  | 'goal_created'
+  | 'goal_running'
+  | 'goal_completed'
+  | 'goal_failed'
+  | 'goal_cancelled'
   | 'source'
   | 'note_draft';
 
@@ -99,6 +104,33 @@ export interface RouteSelection {
   requires_decomposition: boolean;
   max_children: number;
   max_depth: number;
+}
+
+export type GoalStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface GoalNodeData {
+  id: string;
+  run_id: string;
+  parent_id: string | null;
+  title: string;
+  kind: string;
+  status: GoalStatus;
+  agent_profile: string;
+  sequence: number;
+  dependencies: string[];
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface RunEventData {
+  event_id: string;
+  run_id: string;
+  node_id: string | null;
+  sequence: number;
+  type: string;
+  timestamp: string;
+  payload: { goal?: GoalNodeData; [key: string]: unknown };
 }
 
 export interface ConversationSummary {

@@ -30,6 +30,7 @@ export function ChatInput() {
   const conversationId = useChatStore((s) => s.conversationId);
   const setRunId = useChatStore((s) => s.setRunId);
   const setRouteSelection = useChatStore((s) => s.setRouteSelection);
+  const applyRunEvent = useChatStore((s) => s.applyRunEvent);
   const addToolCall = useChatStore((s) => s.addToolCall);
   const finishToolCall = useChatStore((s) => s.finishToolCall);
   const isLoadingHistory = useChatStore((s) => s.isLoadingHistory);
@@ -74,6 +75,7 @@ export function ChatInput() {
         if (serverConversationId) setConversationId(serverConversationId);
       },
       onRouteSelected: setRouteSelection,
+      onGoalEvent: applyRunEvent,
       onToolCall: addToolCall,
       onToolResult: finishToolCall,
       onNoteDraft: (note) => {
@@ -81,7 +83,7 @@ export function ChatInput() {
         useSidebarStore.getState().openDraft(note);
       },
     });
-  }, [input, isSending, isLoadingHistory, conversationId, mode, addUserMessage, startStreaming, appendToken, finishStreaming, setConversationId, setRunId, setRouteSelection, addToolCall, finishToolCall]);
+  }, [input, isSending, isLoadingHistory, conversationId, mode, addUserMessage, startStreaming, appendToken, finishStreaming, setConversationId, setRunId, setRouteSelection, applyRunEvent, addToolCall, finishToolCall]);
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
