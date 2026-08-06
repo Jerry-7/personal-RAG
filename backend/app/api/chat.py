@@ -186,6 +186,8 @@ async def _agent_event_generator(
         mode=mode,
         cancellation_event=cancellation_event,
         allowed_tool_sources=agent_profile.allowed_tool_sources,
+        agent_profile=agent_profile.name,
+        tool_call_budget=agent_profile.tool_call_budget,
         web_page_budget=agent_run.web_page_budget,
         max_crawl_depth=agent_run.max_depth,
     )
@@ -223,6 +225,7 @@ async def _agent_event_generator(
             "data": json.dumps({
                 **route_decision.to_dict(),
                 "agent_profile": agent_profile.name,
+                "tool_call_budget": agent_profile.tool_call_budget,
             }, ensure_ascii=False),
         }
 

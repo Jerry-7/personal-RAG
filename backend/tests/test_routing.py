@@ -39,7 +39,11 @@ class AgentRegistryTests(unittest.TestCase):
         registry = build_default_agent_registry()
         self.assertEqual({profile.tier for profile in registry.list()}, {"fast", "standard", "expert"})
         self.assertEqual(registry.require("fast_general").max_iterations, 1)
-        self.assertIn("web", registry.require("standard_research").allowed_tool_sources)
+        all_sources = frozenset({"builtin", "skill", "web"})
+        self.assertEqual(registry.require("fast_general").allowed_tool_sources, all_sources)
+        self.assertEqual(registry.require("standard_research").allowed_tool_sources, all_sources)
+        self.assertEqual(registry.require("expert_supervisor").allowed_tool_sources, all_sources)
+        self.assertEqual(registry.require("fast_general").tool_call_budget, 2)
         self.assertEqual(registry.require("expert_supervisor").max_children, 4)
 
     def test_duplicate_and_invalid_profiles_are_rejected(self):

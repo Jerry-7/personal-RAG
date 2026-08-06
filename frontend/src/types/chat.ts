@@ -91,6 +91,7 @@ export interface AgentStep {
 
 export interface RouteSelection {
   agent_profile: string;
+  tool_call_budget: number;
   tier: 'fast' | 'standard' | 'expert';
   route: 'direct' | 'tool_agent' | 'supervisor';
   score: number;

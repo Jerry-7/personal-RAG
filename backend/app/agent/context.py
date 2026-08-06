@@ -15,6 +15,8 @@ class AgentRunContext:
     run_id: str = ""
     mode: str = "auto"
     allowed_tool_sources: frozenset[str] | None = None
+    agent_profile: str = "standard_research"
+    tool_call_budget: int = 5
     cancellation_event: Any | None = None
     citations: list[dict[str, Any]] = field(default_factory=list)
     citation_counter: int = 0

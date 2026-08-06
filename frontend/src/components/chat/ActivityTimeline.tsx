@@ -51,7 +51,9 @@ export function ActivityTimeline() {
               <span className="flex-1 truncate">
                 {tierLabels[routeSelection.tier]} · {routeLabels[routeSelection.route]}
               </span>
-              <span className="text-[10px] tabular-nums text-gray-400">评分 {routeSelection.score}</span>
+              <span className="text-[10px] tabular-nums text-gray-400">
+                评分 {routeSelection.score} · 工具 ≤ {routeSelection.tool_call_budget}
+              </span>
               <Check className="h-3.5 w-3.5 text-green-600" />
             </div>
             {!!routeSelection.reasons.length && (

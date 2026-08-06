@@ -41,6 +41,14 @@ notes, and public web pages when the selected mode permits it.
 - Mode policy: {mode_policy}
 - The mode policy is mandatory and takes precedence over general research guidance.
 
+## Agent Tool-Use Budget
+- Agent profile: {agent_profile}
+- Suggested maximum total tool calls: {tool_call_budget}
+- Use the fewest targeted calls needed to answer correctly. Do not repeat an
+  equivalent call or browse without a concrete evidence gap. Treat the budget
+  as a strict planning limit unless exceeding it is necessary to avoid an
+  incorrect or unsupported answer.
+
 ## Available Tools
 {tool_list}
 
@@ -161,6 +169,8 @@ class AgentLoop:
             current_date=date.today().isoformat(),
             mode=mode,
             mode_policy=mode_policies.get(mode, mode_policies["auto"]),
+            agent_profile=context.agent_profile if context else "standard_research",
+            tool_call_budget=context.tool_call_budget if context else settings.agent_max_iterations,
             tool_list=tool_list,
         )
 
