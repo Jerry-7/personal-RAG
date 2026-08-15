@@ -97,6 +97,7 @@ def _recommend_group(group: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     return {
+        "policy_version": group.get("policy_version", 0),
         "tier": group["tier"],
         "route": group["route"],
         "planning_source": group["planning_source"],
@@ -114,14 +115,31 @@ def _recommend_group(group: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def build_routing_recommendations(analytics: dict[str, Any]) -> dict[str, Any]:
-    summary = analytics["summary"]
+def build_routing_recommendations(
+    analytics: dict[str, Any],
+    *,
+    policy_version: int | None = None,
+) -> dict[str, Any]:
+    groups = [
+        group
+        for group in analytics["groups"]
+        if policy_version is None or group.get("policy_version", 0) == policy_version
+    ]
+    summary = (
+        analytics["summary"]
+        if policy_version is None
+        else {
+            "terminal_run_count": sum(group["terminal_run_count"] for group in groups),
+            "rated_run_count": sum(group["rated_run_count"] for group in groups),
+        }
+    )
     items = [
         recommendation
-        for group in analytics["groups"]
+        for group in groups
         if (recommendation := _recommend_group(group)) is not None
     ]
     return {
+        "policy_version": policy_version,
         "readiness": {
             "minimum_terminal_runs": MIN_TERMINAL_RUNS,
             "minimum_rated_runs": MIN_RATED_RUNS,

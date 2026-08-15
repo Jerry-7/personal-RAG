@@ -198,13 +198,15 @@ async def _agent_event_generator(
     from app.agent.supervisor import Supervisor
     from app.services.generator import generator as gen_service
     from app.services.goal_runtime import GoalRuntime, serialize_event
+    from app.services.routing_policy import get_active_routing_policy
 
     cancellation_event = _cancellation_flags.setdefault(conversation_id, asyncio.Event())
     pause_event = _pause_flags.get(conversation_id)
     if pause_event is None:
         pause_event = _running_pause_event()
         _pause_flags[conversation_id] = pause_event
-    route_decision = ComplexityRouter().route(
+    routing_policy = get_active_routing_policy(db)
+    route_decision = ComplexityRouter(routing_policy).route(
         question,
         mode=mode,
         history=chat_history,
@@ -220,6 +222,7 @@ async def _agent_event_generator(
         retry_of_run_id=retry_of_run_id,
         mode=mode,
         route_tier_preference=tier_preference,
+        route_policy_version=route_decision.policy_version,
         agent_profile=agent_profile.name,
         route_tier=route_decision.tier,
         route_name=route_decision.route,

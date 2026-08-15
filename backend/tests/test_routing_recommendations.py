@@ -111,3 +111,28 @@ class RoutingRecommendationTests(unittest.TestCase):
         item = report["items"][0]
         self.assertEqual(item["action"], "downgrade_tier")
         self.assertEqual(item["confidence"], "medium")
+
+    def test_active_policy_does_not_borrow_previous_policy_samples(self):
+        previous = group(
+            policy_version=0,
+            terminal_run_count=20,
+            rated_run_count=10,
+            operational_success_rate=70.0,
+        )
+        current = group(
+            policy_version=1,
+            terminal_run_count=2,
+            rated_run_count=1,
+            operational_success_rate=50.0,
+        )
+
+        report = build_routing_recommendations(
+            analytics(previous, current),
+            policy_version=1,
+        )
+
+        self.assertEqual(report["policy_version"], 1)
+        self.assertEqual(report["readiness"]["terminal_run_count"], 2)
+        self.assertEqual(report["readiness"]["rated_run_count"], 1)
+        self.assertFalse(report["readiness"]["operational_ready"])
+        self.assertEqual(report["items"], [])

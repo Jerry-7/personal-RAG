@@ -9,7 +9,19 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -248,6 +260,9 @@ class AgentRun(Base):
     route_tier_preference: Mapped[str] = mapped_column(
         String(16), nullable=False, default="auto"
     )
+    route_policy_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
     agent_profile: Mapped[str] = mapped_column(String(64), nullable=False, default="standard_research")
     route_tier: Mapped[str] = mapped_column(String(16), nullable=False, default="standard")
     route_name: Mapped[str] = mapped_column(String(32), nullable=False, default="tool_agent")
@@ -280,6 +295,33 @@ class AgentRunFeedback(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow, server_default=func.now()
+    )
+
+
+class RoutingPolicyVersion(Base):
+    """Immutable routing thresholds; activation changes append a new version."""
+
+    __tablename__ = "routing_policy_versions"
+    __table_args__ = (
+        Index(
+            "uq_routing_policy_versions_active",
+            "is_active",
+            unique=True,
+            sqlite_where=text("is_active = 1"),
+        ),
+    )
+
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    standard_min_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    expert_min_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    based_on_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    note: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, server_default=func.now()
     )
 
 

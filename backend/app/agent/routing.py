@@ -17,6 +17,23 @@ ChatMode = Literal["auto", "local", "web"]
 
 
 @dataclass(frozen=True)
+class RoutingPolicy:
+    """Versioned score thresholds used for automatic tier selection."""
+
+    version: int = 0
+    standard_min_score: int = 2
+    expert_min_score: int = 4
+
+    def __post_init__(self) -> None:
+        if self.version < 0:
+            raise ValueError("policy version cannot be negative")
+        if not 1 <= self.standard_min_score < self.expert_min_score <= 10:
+            raise ValueError(
+                "routing thresholds must satisfy 1 <= standard < expert <= 10"
+            )
+
+
+@dataclass(frozen=True)
 class AgentProfile:
     """Capabilities and guardrails for one executable Agent role."""
 
@@ -45,6 +62,7 @@ class RouteDecision:
     max_children: int = 0
     max_depth: int = 0
     tier_preference: AgentTierPreference = "auto"
+    policy_version: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -56,6 +74,7 @@ class RouteDecision:
             "max_children": self.max_children,
             "max_depth": self.max_depth,
             "tier_preference": self.tier_preference,
+            "policy_version": self.policy_version,
         }
 
 
@@ -125,6 +144,9 @@ class ComplexityRouter:
     _multi_source_markers = ("多个", "多份", "跨文档", "来源", "引用", "sources", "documents")
     _simple_markers = ("多少", "是什么", "是否", "有几", "how many", "what is", "is there")
 
+    def __init__(self, policy: RoutingPolicy | None = None) -> None:
+        self.policy = policy or RoutingPolicy()
+
     def route(
         self,
         question: str,
@@ -140,11 +162,18 @@ class ComplexityRouter:
                 tier_preference,
                 reason="manual_tier_override",
                 tier_preference=tier_preference,
+                policy_version=self.policy.version,
             )
 
         normalized = (question or "").strip().lower()
         if not normalized:
-            return RouteDecision("fast", "direct", 0, ("empty_request",))
+            return RouteDecision(
+                "fast",
+                "direct",
+                0,
+                ("empty_request",),
+                policy_version=self.policy.version,
+            )
 
         score = 0
         reasons: list[str] = []
@@ -179,8 +208,17 @@ class ComplexityRouter:
             score = 2
             reasons.append("tool_access_required")
 
-        tier: AgentTier = "expert" if score >= 4 else "standard" if score >= 2 else "fast"
-        decision = self._decision_for_tier(tier)
+        tier: AgentTier = (
+            "expert"
+            if score >= self.policy.expert_min_score
+            else "standard"
+            if score >= self.policy.standard_min_score
+            else "fast"
+        )
+        decision = self._decision_for_tier(
+            tier,
+            policy_version=self.policy.version,
+        )
         return RouteDecision(
             tier=decision.tier,
             route=decision.route,
@@ -189,6 +227,7 @@ class ComplexityRouter:
             requires_decomposition=decision.requires_decomposition,
             max_children=decision.max_children,
             max_depth=decision.max_depth,
+            policy_version=self.policy.version,
         )
 
     @staticmethod
@@ -197,6 +236,7 @@ class ComplexityRouter:
         *,
         reason: str | None = None,
         tier_preference: AgentTierPreference = "auto",
+        policy_version: int = 0,
     ) -> RouteDecision:
         route, score, decomposition, max_children, max_depth = {
             "fast": ("direct", 0, False, 0, 0),
@@ -212,6 +252,7 @@ class ComplexityRouter:
             max_children=max_children,
             max_depth=max_depth,
             tier_preference=tier_preference,
+            policy_version=policy_version,
         )
 
 

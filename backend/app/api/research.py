@@ -23,6 +23,7 @@ from app.db.models import (
 from app.schemas.research import RunFeedbackUpdate
 from app.services.goal_runtime import serialize_event, serialize_goal
 from app.services.routing_analytics import build_routing_analytics
+from app.services.routing_policy import get_active_routing_policy
 from app.services.web_search import search_provider
 
 router = APIRouter()
@@ -132,6 +133,7 @@ def _routing(run: AgentRun, goals: list[GoalNode]) -> dict[str, Any]:
         "observed_max_children": max_children,
         "observed_max_depth": max_depth,
         "tier_preference": run.route_tier_preference,
+        "policy_version": run.route_policy_version,
     }
 
 
@@ -263,7 +265,14 @@ async def get_routing_analytics(
         .all()
         if run_ids else []
     )
-    return build_routing_analytics(runs, goals, tools, feedback)
+    active_policy = get_active_routing_policy(db)
+    return build_routing_analytics(
+        runs,
+        goals,
+        tools,
+        feedback,
+        active_policy_version=active_policy.version,
+    )
 
 
 @router.get("/research-runs/{run_id}")

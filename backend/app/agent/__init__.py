@@ -16,6 +16,7 @@ from app.agent.routing import (
     AgentRegistry,
     AgentTierPreference,
     ComplexityRouter,
+    RoutingPolicy,
     RouteDecision,
     build_default_agent_registry,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "AgentRegistry",
     "AgentTierPreference",
     "ComplexityRouter",
+    "RoutingPolicy",
     "RouteDecision",
     "Supervisor",
     "SupervisorPlanner",

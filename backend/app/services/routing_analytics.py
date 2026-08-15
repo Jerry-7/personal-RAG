@@ -100,6 +100,8 @@ def build_routing_analytics(
     goals: list[GoalNode],
     tools: list[ToolExecution],
     feedback: list[AgentRunFeedback] | None = None,
+    *,
+    active_policy_version: int | None = None,
 ) -> dict[str, Any]:
     goals_by_run: dict[str, list[GoalNode]] = defaultdict(list)
     tools_by_run: dict[str, list[ToolExecution]] = defaultdict(list)
@@ -109,21 +111,29 @@ def build_routing_analytics(
         tools_by_run[tool.run_id].append(tool)
     feedback_by_run = {item.run_id: item for item in feedback or []}
 
-    grouped_runs: dict[tuple[str, str, str], list[AgentRun]] = defaultdict(list)
+    grouped_runs: dict[tuple[int, str, str, str], list[AgentRun]] = defaultdict(list)
     for run in runs:
         source = _planning_source(run, goals_by_run[run.id])
-        grouped_runs[(run.route_tier, run.route_name, source)].append(run)
+        grouped_runs[
+            (run.route_policy_version, run.route_tier, run.route_name, source)
+        ].append(run)
 
     groups = [
         {
+            "policy_version": policy_version,
             "tier": tier,
             "route": route,
             "planning_source": source,
             **_summarize(group, goals_by_run, tools_by_run, feedback_by_run),
         }
-        for (tier, route, source), group in grouped_runs.items()
+        for (policy_version, tier, route, source), group in grouped_runs.items()
     ]
-    groups.sort(key=lambda item: (-item["run_count"], item["tier"], item["route"]))
+    groups.sort(key=lambda item: (
+        -item["policy_version"],
+        -item["run_count"],
+        item["tier"],
+        item["route"],
+    ))
     summary = _summarize(runs, goals_by_run, tools_by_run, feedback_by_run)
     summary["tier_counts"] = {
         tier: sum(run.route_tier == tier for run in runs)
@@ -135,5 +145,8 @@ def build_routing_analytics(
     analytics = {"summary": summary, "groups": groups}
     return {
         **analytics,
-        "recommendation_report": build_routing_recommendations(analytics),
+        "recommendation_report": build_routing_recommendations(
+            analytics,
+            policy_version=active_policy_version,
+        ),
     }

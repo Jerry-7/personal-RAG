@@ -8,7 +8,16 @@ API 路由聚合模块
 
 from fastapi import APIRouter
 
-from app.api import chat, documents, models, notes, research, settings, sources
+from app.api import (
+    chat,
+    documents,
+    models,
+    notes,
+    research,
+    routing_policies,
+    settings,
+    sources,
+)
 
 api_router = APIRouter(prefix="/api")
 
@@ -20,3 +29,4 @@ api_router.include_router(models.router, tags=["Models"])
 api_router.include_router(settings.router, tags=["Settings"])
 api_router.include_router(notes.router, tags=["Notes"])
 api_router.include_router(research.router, tags=["Research"])
+api_router.include_router(routing_policies.router, tags=["Routing Policies"])
