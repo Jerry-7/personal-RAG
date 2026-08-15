@@ -61,6 +61,12 @@ const profileLabels: Record<string, string> = {
 
 const tierLabels = { fast: '快速', standard: '标准', expert: '专家' } as const;
 const routeLabels = { direct: '直接处理', tool_agent: '工具执行', supervisor: '主 Agent 编排' } as const;
+const routeSourceLabels = {
+  heuristic: '规则判断',
+  manual: '手动指定',
+  model: '模型复核',
+  heuristic_fallback: '规则回退',
+} as const;
 const reasonLabels: Record<string, string> = {
   empty_request: '空请求',
   long_request: '长请求',
@@ -73,6 +79,16 @@ const reasonLabels: Record<string, string> = {
   simple_fact_intent: '简单事实',
   tool_access_required: '需要工具',
   manual_tier_override: '手动指定',
+  classifier_assessed: '模型复核',
+  classifier_fallback: '分类器回退',
+  simple_lookup: '简单查询',
+  conversational: '对话请求',
+  single_research_flow: '单次研究',
+  multi_step_reasoning: '多步推理',
+  cross_source_synthesis: '跨来源综合',
+  specialist_reasoning: '专业推理',
+  ambiguous_reference: '指代不明确',
+  tool_required: '需要工具',
 };
 
 const runStatusLabels = {
@@ -612,6 +628,22 @@ export function ActivityTimeline() {
               <span className="shrink-0 tabular-nums">
                 预算 {routingAnalytics.summary.tool_budget_utilization}%
               </span>
+              <span className="shrink-0 tabular-nums">
+                路由置信 {Math.round(routingAnalytics.summary.average_route_confidence * 100)}%
+              </span>
+              {routingAnalytics.summary.model_routed_run_count > 0 && (
+                <span
+                  className="shrink-0 tabular-nums text-blue-600 dark:text-blue-400"
+                  title={`分类器共调用 ${routingAnalytics.summary.classifier_call_count} 次`}
+                >
+                  模型复核 {routingAnalytics.summary.model_routed_run_count}
+                </span>
+              )}
+              {routingAnalytics.summary.classifier_fallback_count > 0 && (
+                <span className="shrink-0 tabular-nums text-amber-600 dark:text-amber-500">
+                  分类回退 {routingAnalytics.summary.classifier_fallback_count}
+                </span>
+              )}
               {routingAnalytics.summary.retry_run_count > 0 && (
                 <span className="shrink-0 tabular-nums">重试 {routingAnalytics.summary.retry_rate}%</span>
               )}
@@ -739,8 +771,19 @@ export function ActivityTimeline() {
                 <Check className="h-3.5 w-3.5 shrink-0 text-green-600" />
               </div>
               <div className="ml-5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-gray-400">
+                <span className="tabular-nums">
+                  {routeSourceLabels[routeSelection.decision_source]} · 置信 {Math.round(routeSelection.confidence * 100)}%
+                </span>
                 {!!routeSelection.reasons.length && (
                   <span>{routeSelection.reasons.map((reason) => reasonLabels[reason] || reason).join(' · ')}</span>
+                )}
+                {routeSelection.classifier_calls > 0 && (
+                  <span
+                    className="min-w-0 max-w-full truncate tabular-nums text-blue-600 dark:text-blue-400"
+                    title={`分类模型 ${routeSelection.classifier_model}；${routeSelection.classifier_calls} 次模型调用`}
+                  >
+                    分类 {routeSelection.classifier_model} · {routeSelection.classifier_original_tokens.toLocaleString()}→{routeSelection.classifier_compressed_tokens.toLocaleString()} tokens · {routeSelection.classifier_calls} 次调用
+                  </span>
                 )}
                 <span className="tabular-nums">
                   层级 {observedMaxDepth}/{routeSelection.max_depth} · 分支 {observedMaxChildren}/{routeSelection.max_children}

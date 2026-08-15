@@ -109,6 +109,12 @@ export interface RouteSelection {
   route: 'direct' | 'tool_agent' | 'supervisor';
   score: number;
   reasons: string[];
+  decision_source: 'heuristic' | 'manual' | 'model' | 'heuristic_fallback';
+  confidence: number;
+  classifier_model: string;
+  classifier_original_tokens: number;
+  classifier_compressed_tokens: number;
+  classifier_calls: number;
   requires_decomposition: boolean;
   max_children: number;
   max_depth: number;
@@ -307,6 +313,11 @@ export interface RoutingAnalytics {
   summary: RoutingAnalyticsMetrics & {
     tier_counts: Record<'fast' | 'standard' | 'expert', number>;
     planning_source_counts: Record<string, number>;
+    decision_source_counts: Partial<Record<RouteSelection['decision_source'], number>>;
+    average_route_confidence: number;
+    classifier_call_count: number;
+    model_routed_run_count: number;
+    classifier_fallback_count: number;
   };
   groups: RoutingAnalyticsGroup[];
   recommendation_report: RoutingRecommendationReport;
