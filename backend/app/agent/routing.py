@@ -14,6 +14,7 @@ from typing import Literal
 AgentTier = Literal["fast", "standard", "expert"]
 AgentTierPreference = Literal["auto", "fast", "standard", "expert"]
 ChatMode = Literal["auto", "local", "web"]
+RouteDecisionSource = Literal["heuristic", "manual", "model", "heuristic_fallback"]
 
 
 @dataclass(frozen=True)
@@ -71,7 +72,7 @@ class AgentProfile:
 
 @dataclass(frozen=True)
 class RouteDecision:
-    """A deterministic, serializable routing result."""
+    """A bounded, serializable routing result with decision provenance."""
 
     tier: AgentTier
     route: str
@@ -82,6 +83,12 @@ class RouteDecision:
     max_depth: int = 0
     tier_preference: AgentTierPreference = "auto"
     policy_version: int = 0
+    decision_source: RouteDecisionSource = "heuristic"
+    confidence: float = 1.0
+    classifier_model: str = ""
+    classifier_original_tokens: int = 0
+    classifier_compressed_tokens: int = 0
+    classifier_calls: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -94,6 +101,12 @@ class RouteDecision:
             "max_depth": self.max_depth,
             "tier_preference": self.tier_preference,
             "policy_version": self.policy_version,
+            "decision_source": self.decision_source,
+            "confidence": self.confidence,
+            "classifier_model": self.classifier_model,
+            "classifier_original_tokens": self.classifier_original_tokens,
+            "classifier_compressed_tokens": self.classifier_compressed_tokens,
+            "classifier_calls": self.classifier_calls,
         }
 
 
@@ -182,6 +195,8 @@ class ComplexityRouter:
                 reason="manual_tier_override",
                 tier_preference=tier_preference,
                 policy_version=self.policy.version,
+                decision_source="manual",
+                confidence=1.0,
             )
 
         normalized = (question or "").strip().lower()
@@ -192,6 +207,8 @@ class ComplexityRouter:
                 0,
                 ("empty_request",),
                 policy_version=self.policy.version,
+                decision_source="heuristic",
+                confidence=1.0,
             )
 
         score = 0
@@ -227,21 +244,66 @@ class ComplexityRouter:
             score = 2
             reasons.append("tool_access_required")
 
-        tier = classify_route_tier(score, self.policy, mode=mode)
-        decision = self._decision_for_tier(
-            tier,
-            policy_version=self.policy.version,
+        return self.decision_for_score(
+            score,
+            mode=mode,
+            reasons=tuple(reasons),
+            confidence=self._heuristic_confidence(score, reasons),
         )
+
+    def decision_for_score(
+        self,
+        score: int,
+        *,
+        mode: ChatMode,
+        reasons: tuple[str, ...],
+        confidence: float,
+        decision_source: RouteDecisionSource = "heuristic",
+        classifier_model: str = "",
+        classifier_original_tokens: int = 0,
+        classifier_compressed_tokens: int = 0,
+        classifier_calls: int = 0,
+    ) -> RouteDecision:
+        """Apply versioned tier thresholds to a validated complexity score."""
+        if not 0 <= score <= 10:
+            raise ValueError("complexity score must be between 0 and 10")
+        if not 0 <= confidence <= 1:
+            raise ValueError("routing confidence must be between 0 and 1")
+        tier = classify_route_tier(score, self.policy, mode=mode)
+        decision = self._decision_for_tier(tier, policy_version=self.policy.version)
         return RouteDecision(
             tier=decision.tier,
             route=decision.route,
             score=score,
-            reasons=tuple(reasons),
+            reasons=reasons,
             requires_decomposition=decision.requires_decomposition,
             max_children=decision.max_children,
             max_depth=decision.max_depth,
             policy_version=self.policy.version,
+            decision_source=decision_source,
+            confidence=round(confidence, 3),
+            classifier_model=classifier_model,
+            classifier_original_tokens=classifier_original_tokens,
+            classifier_compressed_tokens=classifier_compressed_tokens,
+            classifier_calls=classifier_calls,
         )
+
+    def _heuristic_confidence(self, score: int, reasons: list[str]) -> float:
+        if "simple_fact_intent" in reasons:
+            return 0.9
+        if "tool_access_required" in reasons:
+            return 0.95
+        if "complex_intent" in reasons and "multiple_sources" in reasons:
+            return 0.92
+        boundary_distance = min(
+            abs(score - self.policy.standard_min_score),
+            abs(score - self.policy.expert_min_score),
+        )
+        if boundary_distance == 0:
+            return 0.55
+        if boundary_distance == 1:
+            return 0.65
+        return 0.85
 
     @staticmethod
     def _decision_for_tier(
@@ -250,6 +312,8 @@ class ComplexityRouter:
         reason: str | None = None,
         tier_preference: AgentTierPreference = "auto",
         policy_version: int = 0,
+        decision_source: RouteDecisionSource = "heuristic",
+        confidence: float = 1.0,
     ) -> RouteDecision:
         route, score, decomposition, max_children, max_depth = {
             "fast": ("direct", 0, False, 0, 0),
@@ -266,6 +330,8 @@ class ComplexityRouter:
             max_depth=max_depth,
             tier_preference=tier_preference,
             policy_version=policy_version,
+            decision_source=decision_source,
+            confidence=confidence,
         )
 
 

@@ -9,6 +9,7 @@ Agent 模块
 """
 
 from app.agent.tools import ToolRegistry, tool_registry
+from app.agent.adaptive_routing import AdaptiveComplexityRouter
 from app.agent.loop import AgentLoop
 from app.agent.planning import SupervisorPlanner, WorkerPlan, WorkerSpec
 from app.agent.routing import (
@@ -28,6 +29,7 @@ from app.agent import note_tools  # noqa: F401 — 注册笔记草稿工具
 
 __all__ = [
     "AgentLoop",
+    "AdaptiveComplexityRouter",
     "AgentProfile",
     "AgentRegistry",
     "AgentTierPreference",
