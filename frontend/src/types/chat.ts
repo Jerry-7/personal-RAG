@@ -172,6 +172,8 @@ export interface RunMetrics {
   context_compressions: number;
   context_compression_failures: number;
   context_compression_calls: number;
+  context_protected_anchors: number;
+  context_anchor_retries: number;
   context_original_tokens: number;
   context_compressed_tokens: number;
   context_tokens_saved: number;

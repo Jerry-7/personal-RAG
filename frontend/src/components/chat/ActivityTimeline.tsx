@@ -220,6 +220,8 @@ function CompressionActivity({ event }: { event: RunEventData }) {
   const scope = String(event.payload.scope || 'context');
   const originalTokens = Number(event.payload.original_tokens || 0);
   const compressedTokens = Number(event.payload.compressed_tokens || 0);
+  const protectedAnchors = Number(event.payload.protected_anchors || 0);
+  const anchorRetries = Number(event.payload.anchor_retries || 0);
   const message = String(event.payload.message || '上下文压缩失败');
 
   return (
@@ -236,6 +238,11 @@ function CompressionActivity({ event }: { event: RunEventData }) {
         <>
           <span className="tabular-nums">{originalTokens.toLocaleString()} → {compressedTokens.toLocaleString()} tokens</span>
           <span className="tabular-nums">{Number(event.payload.calls || 0)} 次压缩调用</span>
+          {protectedAnchors > 0 && (
+            <span className="tabular-nums">
+              保护 {protectedAnchors} 个锚点{anchorRetries > 0 && ` · 修正 ${anchorRetries} 次`}
+            </span>
+          )}
         </>
       )}
     </div>
@@ -512,7 +519,7 @@ export function ActivityTimeline() {
                   {runSnapshot.metrics.context_compressions > 0 && (
                     <span
                       className="flex items-center gap-1 tabular-nums"
-                      title={`${runSnapshot.metrics.context_compressions} 次压缩 · ${runSnapshot.metrics.context_compression_calls} 次模型调用`}
+                      title={`${runSnapshot.metrics.context_compressions} 次压缩 · ${runSnapshot.metrics.context_compression_calls} 次模型调用 · 保护 ${runSnapshot.metrics.context_protected_anchors} 个锚点 · 修正 ${runSnapshot.metrics.context_anchor_retries} 次`}
                     >
                       <Minimize2 className="h-3 w-3 text-teal-600" />
                       节省 {runSnapshot.metrics.context_tokens_saved.toLocaleString()} tokens · {runSnapshot.metrics.context_compression_ratio}%
