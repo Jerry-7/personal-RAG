@@ -357,6 +357,8 @@ class RunReplayGeneratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(retried_run.user_message_id, self.user_message.id)
         self.assertEqual(retried_run.model_name, "fast-replay-model")
         self.assertEqual(retried_run.route_tier_preference, "fast")
+        self.assertEqual(retried_run.route_max_children, 0)
+        self.assertEqual(retried_run.route_max_depth, 0)
         self.assertEqual(provider.model, "fast-replay-model")
         self.assertEqual(len(user_messages), 1)
         self.assertTrue(any(event["event"] == "done" for event in events))

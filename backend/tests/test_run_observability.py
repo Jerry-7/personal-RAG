@@ -38,6 +38,8 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
             route_score=6,
             route_reasons_json='["complex_intent"]',
             route_requires_decomposition=True,
+            route_max_children=4,
+            route_max_depth=2,
             model_provider="ollama",
             model_name="expert-model",
             status="completed",
@@ -54,8 +56,18 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
             agent_profile="expert_supervisor",
             input_data={},
         )
-        worker, _ = runtime.create_child(
+        primary, _ = runtime.create_child(
             parent=root,
+            title="primary",
+            kind="agent",
+            agent_profile="expert_supervisor",
+            input_data={},
+            tool_call_budget=10,
+            model_provider="ollama",
+            model_name="expert-model",
+        )
+        worker, _ = runtime.create_child(
+            parent=primary,
             title="worker",
             kind="agent",
             agent_profile="web_researcher",
@@ -76,6 +88,7 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         )
         self.db.add(self.tool)
         runtime.transition(worker, "completed")
+        runtime.transition(primary, "completed")
         runtime.transition(root, "completed")
         self.retry = AgentRun(
             id="observable-retry",
@@ -101,10 +114,17 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         ])
         source_summary = listed["runs"][1]
         self.assertEqual(source_summary["retry_count"], 1)
-        self.assertEqual(source_summary["metrics"]["agent_count"], 1)
+        self.assertEqual(source_summary["metrics"]["agent_count"], 2)
         self.assertEqual(source_summary["metrics"]["tool_calls_used"], 1)
-        self.assertEqual(source_summary["metrics"]["tool_call_budget"], 7)
+        self.assertEqual(source_summary["metrics"]["tool_call_budget"], 17)
+        self.assertEqual(source_summary["metrics"]["progress_percent"], 100)
+        self.assertEqual(source_summary["metrics"]["goals_pending"], 0)
+        self.assertEqual(source_summary["metrics"]["goal_retry_attempts"], 0)
         self.assertEqual(source_summary["routing"]["route"], "supervisor")
+        self.assertEqual(source_summary["routing"]["max_children"], 4)
+        self.assertEqual(source_summary["routing"]["max_depth"], 2)
+        self.assertEqual(source_summary["routing"]["observed_max_children"], 1)
+        self.assertEqual(source_summary["routing"]["observed_max_depth"], 1)
         self.assertEqual(source_summary["model_name"], "expert-model")
 
         detail = await get_research_run(self.run.id, self.db)
@@ -113,8 +133,8 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(detail["retryable"])
         self.assertEqual(detail["metrics"]["duration_ms"], 2000)
         self.assertEqual(detail["metrics"]["tool_duration_ms"], 125)
-        self.assertEqual(detail["goals"][1]["tool_call_budget"], 7)
-        self.assertEqual(detail["goals"][1]["model_name"], "standard-model")
+        self.assertEqual(detail["goals"][2]["tool_call_budget"], 7)
+        self.assertEqual(detail["goals"][2]["model_name"], "standard-model")
         self.assertEqual(detail["tools"][0]["name"], "web_search")
         self.assertEqual(detail["tools"][0]["arguments"], {"query": "test"})
 
@@ -200,4 +220,42 @@ class AgentTierPreferenceMigrationTests(unittest.TestCase):
                 "SELECT route_tier_preference FROM agent_runs WHERE id = 'legacy-run'"
             )).scalar_one()
             self.assertEqual(preference, "auto")
+        engine.dispose()
+
+
+class RouteHierarchyLimitMigrationTests(unittest.TestCase):
+    def test_route_limits_migration_backfills_each_legacy_tier(self):
+        engine = create_engine("sqlite:///:memory:")
+        migration_path = (
+            Path(__file__).parents[1]
+            / "alembic"
+            / "versions"
+            / "20260815_06_route_hierarchy_limits.py"
+        )
+        spec = importlib.util.spec_from_file_location("route_limit_migration", migration_path)
+        assert spec and spec.loader
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE agent_runs (id VARCHAR(36) PRIMARY KEY, route_tier VARCHAR(16))"
+            ))
+            connection.execute(text(
+                "INSERT INTO agent_runs VALUES "
+                "('fast-run', 'fast'), ('standard-run', 'standard'), ('expert-run', 'expert')"
+            ))
+            migration.op = Operations(MigrationContext.configure(connection))
+            migration.upgrade()
+            migration.upgrade()
+
+            limits = connection.execute(text(
+                "SELECT route_tier, route_max_children, route_max_depth "
+                "FROM agent_runs ORDER BY route_tier"
+            )).all()
+            self.assertEqual(limits, [
+                ("expert", 4, 2),
+                ("fast", 0, 0),
+                ("standard", 1, 1),
+            ])
         engine.dispose()

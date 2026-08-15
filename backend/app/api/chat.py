@@ -226,6 +226,8 @@ async def _agent_event_generator(
         route_score=route_decision.score,
         route_reasons_json=json.dumps(route_decision.reasons),
         route_requires_decomposition=route_decision.requires_decomposition,
+        route_max_children=route_decision.max_children,
+        route_max_depth=route_decision.max_depth,
         model_provider=model_selection.provider,
         model_name=model_selection.model,
         status="running",

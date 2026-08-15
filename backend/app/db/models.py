@@ -254,6 +254,8 @@ class AgentRun(Base):
     route_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     route_reasons_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     route_requires_decomposition: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    route_max_children: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    route_max_depth: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     model_provider: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     model_name: Mapped[str] = mapped_column(String(256), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running", index=True)

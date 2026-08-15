@@ -42,18 +42,37 @@ def _duration_ms(started_at: datetime | None, completed_at: datetime | None) -> 
 
 
 def _tree_shape(goals: list[GoalNode]) -> tuple[int, int]:
-    children: Counter[str | None] = Counter(goal.parent_id for goal in goals)
+    primary_agents = sorted(
+        (goal for goal in goals if goal.kind == "agent"),
+        key=lambda goal: goal.sequence,
+    )
+    if not primary_agents:
+        return 0, 0
+
+    primary_id = primary_agents[0].id
     parents = {goal.id: goal.parent_id for goal in goals}
+    descendants: list[GoalNode] = []
     max_depth = 0
     for goal in goals:
+        if goal.id == primary_id:
+            continue
         depth = 0
         parent_id = goal.parent_id
         visited = {goal.id}
         while parent_id and parent_id not in visited:
             visited.add(parent_id)
             depth += 1
+            if parent_id == primary_id:
+                descendants.append(goal)
+                max_depth = max(max_depth, depth)
+                break
             parent_id = parents.get(parent_id)
-        max_depth = max(max_depth, depth)
+    descendant_ids = {goal.id for goal in descendants}
+    children = Counter(
+        goal.parent_id
+        for goal in descendants
+        if goal.parent_id == primary_id or goal.parent_id in descendant_ids
+    )
     return max(children.values(), default=0), max_depth
 
 
@@ -63,6 +82,10 @@ def _metrics(
     tools: list[ToolExecution],
 ) -> dict[str, Any]:
     goal_statuses = Counter(goal.status for goal in goals)
+    terminal_goals = sum(
+        goal_statuses[status] for status in ("completed", "failed", "cancelled")
+    )
+    progress_percent = round(terminal_goals * 100 / len(goals)) if goals else 0
     return {
         "duration_ms": _duration_ms(run.started_at, run.completed_at),
         "goal_count": len(goals),
@@ -70,6 +93,10 @@ def _metrics(
         "goals_completed": goal_statuses["completed"],
         "goals_failed": goal_statuses["failed"],
         "goals_cancelled": goal_statuses["cancelled"],
+        "goals_pending": goal_statuses["pending"],
+        "goals_running": goal_statuses["running"],
+        "goal_retry_attempts": sum(max(0, goal.attempt - 1) for goal in goals),
+        "progress_percent": progress_percent,
         "tool_calls_used": len(tools),
         "tool_calls_failed": sum(tool.status == "failed" for tool in tools),
         "tool_duration_ms": sum(tool.duration_ms or 0 for tool in tools),
@@ -97,8 +124,10 @@ def _routing(run: AgentRun, goals: list[GoalNode]) -> dict[str, Any]:
         "score": run.route_score,
         "reasons": json.loads(run.route_reasons_json or "[]"),
         "requires_decomposition": run.route_requires_decomposition,
-        "max_children": max_children,
-        "max_depth": max_depth,
+        "max_children": run.route_max_children,
+        "max_depth": run.route_max_depth,
+        "observed_max_children": max_children,
+        "observed_max_depth": max_depth,
         "tier_preference": run.route_tier_preference,
     }
 
