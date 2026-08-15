@@ -5,7 +5,7 @@
  */
 
 import { create } from 'zustand';
-import type { AgentStep, CitationData, GoalNodeData, MessageItem, RouteSelection, RunEventData } from '../types/chat';
+import type { AgentStep, CitationData, GoalNodeData, MessageItem, ResearchRunDetail, ResearchRunSummary, RouteSelection, RunEventData } from '../types/chat';
 
 interface ChatState {
   /** 当前对话 ID */
@@ -23,6 +23,8 @@ interface ChatState {
   /** 流式消息引用计数器（用于内联标记） */
   citationCounter: number;
   runId: string | null;
+  runHistory: ResearchRunSummary[];
+  runSnapshot: ResearchRunDetail | null;
   routeSelection: RouteSelection | null;
   goalNodes: GoalNodeData[];
   runEvents: RunEventData[];
@@ -41,6 +43,8 @@ interface ChatState {
   setLoadingHistory: (loading: boolean) => void;
   restoreConversation: (id: string, messages: MessageItem[]) => void;
   setRunId: (id: string) => void;
+  setRunHistory: (runs: ResearchRunSummary[]) => void;
+  restoreRunSnapshot: (snapshot: ResearchRunDetail) => void;
   setPaused: (paused: boolean) => void;
   setRouteSelection: (selection: RouteSelection) => void;
   applyRunEvent: (event: RunEventData) => void;
@@ -57,6 +61,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingCitations: [],
   citationCounter: 0,
   runId: null,
+  runHistory: [],
+  runSnapshot: null,
   routeSelection: null,
   goalNodes: [],
   runEvents: [],
@@ -81,7 +87,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   startStreaming: () =>
-    set({ isStreaming: true, isPaused: false, streamingText: '', streamingCitations: [], citationCounter: 0, agentSteps: [], runId: null, routeSelection: null, goalNodes: [], runEvents: [] }),
+    set({ isStreaming: true, isPaused: false, streamingText: '', streamingCitations: [], citationCounter: 0, agentSteps: [], runId: null, runHistory: [], runSnapshot: null, routeSelection: null, goalNodes: [], runEvents: [] }),
 
   appendToken: (text) =>
     set((s) => ({ streamingText: s.streamingText + text })),
@@ -120,7 +126,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   clearMessages: () => {
     localStorage.removeItem('personal-rag.conversation-id');
-    set({ messages: [], conversationId: null, agentSteps: [], runId: null, routeSelection: null, goalNodes: [], runEvents: [], isLoadingHistory: false, isPaused: false });
+    set({ messages: [], conversationId: null, agentSteps: [], runId: null, runHistory: [], runSnapshot: null, routeSelection: null, goalNodes: [], runEvents: [], isLoadingHistory: false, isPaused: false });
   },
   setLoadingHistory: (loading) => set({ isLoadingHistory: loading }),
   restoreConversation: (id, messages) => {
@@ -135,12 +141,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingCitations: [],
       agentSteps: [],
       runId: null,
+      runHistory: [],
+      runSnapshot: null,
       routeSelection: null,
       goalNodes: [],
       runEvents: [],
     });
   },
   setRunId: (id) => set({ runId: id }),
+  setRunHistory: (runs) => set({ runHistory: runs }),
+  restoreRunSnapshot: (snapshot) => set({
+    runId: snapshot.id,
+    runSnapshot: snapshot,
+    routeSelection: snapshot.routing,
+    goalNodes: snapshot.goals,
+    runEvents: snapshot.events,
+    agentSteps: snapshot.tools.map((tool) => ({
+      id: tool.id,
+      node_id: tool.node_id || undefined,
+      type: 'tool_call' as const,
+      name: tool.name,
+      arguments: tool.arguments,
+      result: tool.error_message || undefined,
+      status: tool.status,
+      duration_ms: tool.duration_ms || undefined,
+      timestamp: tool.created_at ? new Date(tool.created_at).getTime() : 0,
+    })),
+  }),
   setPaused: (paused) => set({ isPaused: paused }),
   setRouteSelection: (selection) => set({ routeSelection: selection }),
   applyRunEvent: (event) => set((state) => {

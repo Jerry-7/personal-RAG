@@ -118,6 +118,7 @@ export interface GoalNodeData {
   kind: string;
   status: GoalStatus;
   agent_profile: string;
+  tool_call_budget: number;
   sequence: number;
   attempt: number;
   max_attempts: number;
@@ -135,6 +136,57 @@ export interface RunEventData {
   type: string;
   timestamp: string;
   payload: { goal?: GoalNodeData; [key: string]: unknown };
+}
+
+export type RunStatus = 'running' | 'paused' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+
+export interface RunMetrics {
+  duration_ms: number | null;
+  goal_count: number;
+  agent_count: number;
+  goals_completed: number;
+  goals_failed: number;
+  goals_cancelled: number;
+  tool_calls_used: number;
+  tool_calls_failed: number;
+  tool_duration_ms: number;
+  tool_call_budget: number;
+  web_pages_used: number;
+  web_page_budget: number;
+}
+
+export interface ResearchRunSummary {
+  id: string;
+  conversation_id: string;
+  retry_of_run_id: string | null;
+  retry_count: number;
+  mode: ChatMode;
+  status: RunStatus;
+  routing: RouteSelection;
+  metrics: RunMetrics;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface PersistedToolExecution {
+  id: string;
+  node_id: string | null;
+  iteration: number;
+  name: string;
+  arguments: Record<string, unknown>;
+  status: 'running' | 'completed' | 'failed';
+  duration_ms: number | null;
+  error_message: string | null;
+  created_at: string | null;
+}
+
+export interface ResearchRunDetail extends ResearchRunSummary {
+  retryable: boolean;
+  retried_by_run_ids: string[];
+  goals: GoalNodeData[];
+  events: RunEventData[];
+  tools: PersistedToolExecution[];
 }
 
 export interface ConversationSummary {

@@ -11,6 +11,7 @@ import { useLayoutStore } from '../../store/layoutStore';
 import { useChatStore } from '../../store/chatStore';
 import { getConversation, listConversations } from '../../api/chat';
 import type { ConversationSummary } from '../../types/chat';
+import { restoreConversationRuns } from '../../services/runHistory';
 
 export function Header() {
   const openSettings = useSettingsStore((s) => s.openSettings);
@@ -31,6 +32,9 @@ export function Header() {
     try {
       const conversation = await getConversation(id);
       useChatStore.getState().restoreConversation(conversation.id, conversation.messages);
+      await restoreConversationRuns(conversation.id).catch(() => {
+        useChatStore.getState().setRunHistory([]);
+      });
     } catch {
       useChatStore.getState().setLoadingHistory(false);
       if (previousId) useChatStore.getState().setConversationId(previousId);

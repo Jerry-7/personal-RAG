@@ -6,22 +6,26 @@ import {
   ChevronDown,
   ChevronRight,
   CircleDashed,
+  Clock3,
   GitFork,
   GitMerge,
   Globe2,
   Loader2,
+  History,
   Pause,
   Play,
   Route,
   RotateCcw,
   Search,
   Target,
+  Wrench,
   XCircle,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useChatStore } from '../../store/chatStore';
 import { pauseChatExecution, resumeChatExecution, retryChatRun } from '../../services/chatExecution';
+import { loadRunSnapshot } from '../../services/runHistory';
 import type { AgentStep, GoalNodeData } from '../../types/chat';
 
 const toolLabels: Record<string, string> = {
@@ -57,6 +61,22 @@ const reasonLabels: Record<string, string> = {
   simple_fact_intent: '简单事实',
   tool_access_required: '需要工具',
 };
+
+const runStatusLabels = {
+  running: '正在执行',
+  paused: '已暂停',
+  completed: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
+  interrupted: '已中断',
+} as const;
+
+function formatDuration(durationMs: number | null): string {
+  if (durationMs === null) return '--';
+  if (durationMs < 1000) return `${durationMs}ms`;
+  if (durationMs < 60000) return `${(durationMs / 1000).toFixed(1)}s`;
+  return `${Math.floor(durationMs / 60000)}m ${Math.round((durationMs % 60000) / 1000)}s`;
+}
 
 function StatusIcon({ status }: { status: GoalNodeData['status'] | AgentStep['status'] }) {
   if (status === 'running') return <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-600" />;
@@ -125,6 +145,11 @@ function GoalBranch({ goal, goals, steps, compact = false }: GoalBranchProps) {
         <span className="shrink-0 text-[10px] text-gray-400">
           {profileLabels[goal.agent_profile] || goal.agent_profile}
         </span>
+        {goal.tool_call_budget > 0 && (
+          <span className="shrink-0 tabular-nums text-[10px] text-gray-400">
+            工具 {goalSteps.length}/{goal.tool_call_budget}
+          </span>
+        )}
         {goal.attempt > 1 && (
           <span className="shrink-0 text-[10px] font-medium text-amber-600 dark:text-amber-400">
             重试 {goal.attempt}/{goal.max_attempts}
@@ -191,17 +216,22 @@ export function ActivityTimeline() {
   const isStreaming = useChatStore((state) => state.isStreaming);
   const isPaused = useChatStore((state) => state.isPaused);
   const runId = useChatStore((state) => state.runId);
+  const runHistory = useChatStore((state) => state.runHistory);
+  const runSnapshot = useChatStore((state) => state.runSnapshot);
 
-  if (!steps.length && !routeSelection && !goalNodes.length) return null;
+  if (!steps.length && !routeSelection && !goalNodes.length && !runSnapshot && !runHistory.length) return null;
 
   const roots = goalNodes.filter((goal) => goal.parent_id === null);
   const assignedGoalIds = new Set(goalNodes.map((goal) => goal.id));
   const unassignedSteps = steps.filter((step) => !step.node_id || !assignedGoalIds.has(step.node_id));
-  const running = isStreaming || goalNodes.some((goal) => goal.status === 'running');
+  const running = isStreaming
+    || runSnapshot?.status === 'running'
+    || goalNodes.some((goal) => goal.status === 'running');
   const retryable = Boolean(
     runId
       && !isStreaming
-      && roots.some((goal) => goal.status === 'failed' || goal.status === 'cancelled')
+      && (runSnapshot?.retryable
+        ?? roots.some((goal) => goal.status === 'failed' || goal.status === 'cancelled'))
   );
   const activityCount = steps.length + goalNodes.length + (routeSelection ? 1 : 0);
   const togglePaused = async () => {
@@ -226,7 +256,15 @@ export function ActivityTimeline() {
           className="flex h-8 min-w-0 flex-1 items-center gap-2 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
         >
           {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
-          <span className="truncate">{isPaused ? '已暂停' : running ? '正在执行' : `执行活动 · ${activityCount} 项`}</span>
+          <span className="truncate">
+            {isPaused
+              ? '已暂停'
+              : !isStreaming && runSnapshot
+                ? runStatusLabels[runSnapshot.status]
+                : running
+                  ? '正在执行'
+                  : `执行活动 · ${activityCount} 项`}
+          </span>
         </button>
         {isStreaming && runId && (
           <button
@@ -255,6 +293,58 @@ export function ActivityTimeline() {
 
       {expanded && (
         <div className="max-w-3xl space-y-2 pb-3">
+          {(runHistory.length > 1 || runSnapshot) && (
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-gray-400">
+              {runHistory.length > 1 && (
+                <label className="flex min-w-0 items-center gap-1.5">
+                  <History className="h-3.5 w-3.5 shrink-0" />
+                  <select
+                    aria-label="选择运行记录"
+                    value={runId || ''}
+                    disabled={isStreaming}
+                    onChange={(event) => void loadRunSnapshot(event.target.value).catch(() => undefined)}
+                    className="h-6 max-w-56 border-0 bg-transparent pr-1 text-[10px] text-gray-500 outline-none disabled:opacity-50 dark:text-gray-400"
+                  >
+                    {runHistory.map((run, index) => (
+                      <option key={run.id} value={run.id}>
+                        {`运行 ${runHistory.length - index} · ${runStatusLabels[run.status]}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {runSnapshot && (
+                <>
+                  <span className="font-medium text-gray-600 dark:text-gray-300">
+                    {runStatusLabels[runSnapshot.status]}
+                  </span>
+                  <span className="flex items-center gap-1 tabular-nums">
+                    <Clock3 className="h-3 w-3" />
+                    {formatDuration(runSnapshot.metrics.duration_ms)}
+                  </span>
+                  <span className="flex items-center gap-1 tabular-nums">
+                    <Bot className="h-3 w-3" />
+                    {runSnapshot.metrics.agent_count} Agent
+                  </span>
+                  <span className="flex items-center gap-1 tabular-nums">
+                    <Wrench className="h-3 w-3" />
+                    {runSnapshot.metrics.tool_calls_used}/{runSnapshot.metrics.tool_call_budget}
+                  </span>
+                  <span className="flex items-center gap-1 tabular-nums">
+                    <Globe2 className="h-3 w-3" />
+                    {runSnapshot.metrics.web_pages_used}/{runSnapshot.metrics.web_page_budget}
+                  </span>
+                  {runSnapshot.retry_of_run_id && <span>重试运行</span>}
+                  {runSnapshot.retry_count > 0 && <span>{runSnapshot.retry_count} 次后续重试</span>}
+                </>
+              )}
+            </div>
+          )}
+          {runSnapshot?.error_message && (
+            <p className="text-[10px] leading-4 text-red-500">
+              {runSnapshot.error_message}
+            </p>
+          )}
           {routeSelection && (
             <div className="text-xs text-gray-600 dark:text-gray-400">
               <div className="flex min-h-7 items-center gap-2">

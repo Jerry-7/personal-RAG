@@ -15,6 +15,7 @@ import { useSettingsStore } from './store/settingsStore';
 import { useSidebarStore } from './store/sidebarStore';
 import { useChatStore } from './store/chatStore';
 import { getConversation } from './api/chat';
+import { restoreConversationRuns } from './services/runHistory';
 
 function App() {
   const isSettingsOpen = useSettingsStore((s) => s.isSettingsOpen);
@@ -30,6 +31,7 @@ function App() {
       .then((conversation) => {
         if (!cancelled && useChatStore.getState().conversationId === conversationId) {
           useChatStore.getState().restoreConversation(conversation.id, conversation.messages);
+          void restoreConversationRuns(conversation.id).catch(() => undefined);
         }
       })
       .catch(() => {

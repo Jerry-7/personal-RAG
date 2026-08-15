@@ -10,6 +10,7 @@ import { useChatStore } from '../store/chatStore';
 import { useNoteStore } from '../store/noteStore';
 import { useSidebarStore } from '../store/sidebarStore';
 import type { ChatMode } from '../types/chat';
+import { restoreConversationRuns } from './runHistory';
 
 let activeController: AbortController | null = null;
 
@@ -24,6 +25,9 @@ function callbacks(): ChatStreamCallbacks {
         state.setConversationId(data.conversation_id);
       }
       state.finishStreaming(data.citations, data.message_id);
+      if (data.conversation_id && data.run_id) {
+        void restoreConversationRuns(data.conversation_id, data.run_id).catch(() => undefined);
+      }
     },
     onError: (error) => {
       activeController = null;
