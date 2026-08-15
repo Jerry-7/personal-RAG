@@ -62,6 +62,54 @@ class ConcurrentCitationAgent:
             self.state["active"] -= 1
 
 
+class FlakyAgent:
+    def __init__(self, profile: AgentProfile, state: dict) -> None:
+        self.profile = profile
+        self.state = state
+
+    async def run(self, **kwargs):
+        role = self.profile.role
+        self.state[role] = self.state.get(role, 0) + 1
+        if role == "retriever" and self.state[role] == 1:
+            yield {"event": "error", "data": {"message": "temporary retriever failure"}}
+            return
+        if role == "synthesizer":
+            self.state["synthesis_question"] = kwargs["question"]
+            yield {"event": "token", "data": "recovered synthesis"}
+            return
+        yield {"event": "token", "data": f"{role} recovered evidence"}
+
+
+class BudgetRetryAgent:
+    def __init__(self, profile: AgentProfile, state: dict) -> None:
+        self.profile = profile
+        self.state = state
+
+    async def run(self, **kwargs):
+        role = self.profile.role
+        context = kwargs["context"]
+        if role == "web_researcher":
+            self.state["web_attempts"] = self.state.get("web_attempts", 0) + 1
+            self.state.setdefault("sessions", []).append(context.db)
+            if self.state["web_attempts"] == 1:
+                context.web_pages_used = 2
+                context.visited_urls.add("https://example.com/evidence")
+                context.tool_output_chars = 123
+                yield {"event": "error", "data": {"message": "temporary web failure"}}
+                return
+            self.state["second_attempt_budget"] = (
+                context.web_pages_used,
+                set(context.visited_urls),
+                context.tool_output_chars,
+            )
+            yield {"event": "token", "data": "web evidence after retry"}
+            return
+        if role == "synthesizer":
+            yield {"event": "token", "data": "budget-aware synthesis"}
+            return
+        yield {"event": "token", "data": "local evidence"}
+
+
 class SupervisorTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.engine = create_engine("sqlite:///:memory:")
@@ -150,11 +198,49 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
         ]
         children = self.db.query(GoalNode).filter(GoalNode.parent_id == self.parent.id).all()
         status_by_profile = {goal.agent_profile: goal.status for goal in children}
+        retriever_goal = next(
+            goal for goal in children if goal.agent_profile == "local_retriever"
+        )
 
         self.assertEqual(status_by_profile["local_retriever"], "failed")
+        self.assertEqual(retriever_goal.attempt, 2)
         self.assertEqual(status_by_profile["web_researcher"], "completed")
         self.assertEqual(status_by_profile["expert_synthesizer"], "completed")
         self.assertFalse(any(event["event"] == "error" for event in events))
+        self.assertTrue(any(event["event"] == "goal_retrying" for event in events))
+
+    async def test_transient_worker_failure_recovers_on_second_attempt(self):
+        state = {}
+        supervisor = Supervisor(
+            provider=object(),  # type: ignore[arg-type]
+            registry=build_default_agent_registry(),
+            goal_runtime=self.runtime,
+            parent_goal=self.parent,
+            context=self.context,
+            agent_factory=lambda profile: FlakyAgent(profile, state),
+            session_factory=self.session_factory,
+        )
+
+        events = [
+            event
+            async for event in supervisor.run(question="重试研究", mode="auto")
+        ]
+        children = self.db.query(GoalNode).filter(
+            GoalNode.parent_id == self.parent.id
+        ).all()
+        retriever_goal = next(
+            goal for goal in children if goal.agent_profile == "local_retriever"
+        )
+
+        self.assertEqual(state["retriever"], 2)
+        self.assertEqual(state["web_researcher"], 1)
+        self.assertEqual(retriever_goal.status, "completed")
+        self.assertEqual(retriever_goal.attempt, 2)
+        self.assertIsNone(retriever_goal.error_message)
+        self.assertIn("retriever recovered evidence", state["synthesis_question"])
+        retry_events = [event for event in events if event["event"] == "goal_retrying"]
+        self.assertEqual(len(retry_events), 1)
+        self.assertEqual(retry_events[0]["data"]["payload"]["goal"]["attempt"], 2)
 
     async def test_workers_overlap_and_citations_are_remapped_in_plan_order(self):
         state = {
@@ -191,4 +277,34 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
                 for event in events
                 if event["event"] == "token"
             ),
+        )
+
+    async def test_retry_keeps_worker_resource_usage_across_fresh_sessions(self):
+        state = {}
+        supervisor = Supervisor(
+            provider=object(),  # type: ignore[arg-type]
+            registry=build_default_agent_registry(),
+            goal_runtime=self.runtime,
+            parent_goal=self.parent,
+            context=self.context,
+            agent_factory=lambda profile: BudgetRetryAgent(profile, state),
+            session_factory=self.session_factory,
+        )
+
+        events = [
+            event
+            async for event in supervisor.run(question="预算重试", mode="auto")
+        ]
+
+        self.assertEqual(state["web_attempts"], 2)
+        self.assertIsNot(state["sessions"][0], state["sessions"][1])
+        self.assertEqual(
+            state["second_attempt_budget"],
+            (2, {"https://example.com/evidence"}, 123),
+        )
+        self.assertEqual(self.context.web_pages_used, 2)
+        self.assertIn("https://example.com/evidence", self.context.visited_urls)
+        self.assertEqual(
+            len([event for event in events if event["event"] == "goal_retrying"]),
+            1,
         )

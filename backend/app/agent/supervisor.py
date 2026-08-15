@@ -38,6 +38,7 @@ class WorkerResult:
     report: str = ""
     error_message: str = ""
     cancelled: bool = False
+    attempts: int = 1
     citations: list[dict[str, Any]] = field(default_factory=list)
     web_pages_used: int = 0
     visited_urls: set[str] = field(default_factory=set)
@@ -100,6 +101,7 @@ class Supervisor:
                     kind="agent",
                     agent_profile=profile.name,
                     input_data={"question": question, "mode": spec.mode, "role": spec.role},
+                    max_attempts=profile.max_attempts,
                 )
                 worker_goal_ids.append(goal.id)
                 worker_entries.append((spec, profile, goal))
@@ -130,6 +132,13 @@ class Supervisor:
                     if kind == "event":
                         yield payload
                         continue
+                    if kind == "retry":
+                        retry_event = self.goal_runtime.retry(
+                            worker_entries[index][2],
+                            str(payload),
+                        )
+                        yield self._event(retry_event)
+                        continue
 
                     result: WorkerResult = payload
                     completed += 1
@@ -141,14 +150,20 @@ class Supervisor:
                         transition = self.goal_runtime.transition(
                             result.goal,
                             "failed",
-                            output={"report": result.report[:12000]},
+                            output={
+                                "report": result.report[:12000],
+                                "attempts": result.attempts,
+                            },
                             error_message=result.error_message,
                         )
                     else:
                         transition = self.goal_runtime.transition(
                             result.goal,
                             "completed",
-                            output={"report": result.report[:12000]},
+                            output={
+                                "report": result.report[:12000],
+                                "attempts": result.attempts,
+                            },
                         )
                     yield self._event(transition)
             finally:
@@ -239,61 +254,98 @@ class Supervisor:
         queue: asyncio.Queue[tuple[str, int, Any]],
         worker_count: int,
     ) -> None:
-        worker_db: Session | None = None
-        worker_context: AgentRunContext | None = None
         result = WorkerResult(spec=spec, goal=goal)
+        web_pages_used = 0
+        visited_urls: set[str] = set()
+        tool_output_chars = 0
+        max_tool_output_chars = max(
+            4000, self.context.max_tool_output_chars // worker_count
+        )
         try:
-            worker_db = self.session_factory()
-            worker_context = AgentRunContext(
-                db=worker_db,
-                conversation_id=self.context.conversation_id,
-                run_id=self.context.run_id,
-                goal_node_id=goal.id,
-                mode=spec.mode,
-                allowed_tool_sources=profile.allowed_tool_sources,
-                agent_profile=profile.name,
-                tool_call_budget=profile.tool_call_budget,
-                cancellation_event=self.context.cancellation_event,
-                web_page_budget=self.context.web_page_budget if spec.mode == "web" else 0,
-                max_crawl_depth=self.context.max_crawl_depth,
-                max_tool_output_chars=max(
-                    4000, self.context.max_tool_output_chars // worker_count
-                ),
-            )
-            agent = self.agent_factory(profile)
-            async for event in agent.run(
-                question=self._worker_question(question, spec),
-                conversation_id=self.context.conversation_id,
-                chat_history=chat_history,
-                context=worker_context,
-            ):
-                event_type = event.get("event", "")
-                data = event.get("data", "")
-                if event_type == "token":
-                    result.report += (
-                        data if isinstance(data, str) else str(data.get("text", ""))
+            for attempt in range(1, profile.max_attempts + 1):
+                result.attempts = attempt
+                result.report = ""
+                result.error_message = ""
+                result.citations = []
+                worker_db: Session | None = None
+                worker_context: AgentRunContext | None = None
+                try:
+                    worker_db = self.session_factory()
+                    worker_context = AgentRunContext(
+                        db=worker_db,
+                        conversation_id=self.context.conversation_id,
+                        run_id=self.context.run_id,
+                        goal_node_id=goal.id,
+                        mode=spec.mode,
+                        allowed_tool_sources=profile.allowed_tool_sources,
+                        agent_profile=profile.name,
+                        tool_call_budget=profile.tool_call_budget,
+                        cancellation_event=self.context.cancellation_event,
+                        web_page_budget=(
+                            self.context.web_page_budget if spec.mode == "web" else 0
+                        ),
+                        web_pages_used=web_pages_used,
+                        max_crawl_depth=self.context.max_crawl_depth,
+                        visited_urls=set(visited_urls),
+                        tool_output_chars=tool_output_chars,
+                        max_tool_output_chars=max_tool_output_chars,
                     )
-                elif event_type == "citation":
-                    continue
-                elif event_type == "error":
-                    result.error_message = (
-                        str(data.get("message", "Worker failed"))
-                        if isinstance(data, dict) else str(data)
-                    )
-                else:
-                    await queue.put(("event", index, event))
-            result.cancelled = worker_context.is_cancelled()
+                    agent = self.agent_factory(profile)
+                    async for event in agent.run(
+                        question=self._worker_question(question, spec),
+                        conversation_id=self.context.conversation_id,
+                        chat_history=chat_history,
+                        context=worker_context,
+                    ):
+                        event_type = event.get("event", "")
+                        data = event.get("data", "")
+                        if event_type == "token":
+                            result.report += (
+                                data
+                                if isinstance(data, str)
+                                else str(data.get("text", ""))
+                            )
+                        elif event_type == "citation":
+                            continue
+                        elif event_type == "error":
+                            result.error_message = (
+                                str(data.get("message", "Worker failed"))
+                                if isinstance(data, dict)
+                                else str(data)
+                            )
+                        else:
+                            await queue.put(("event", index, event))
+                    result.cancelled = worker_context.is_cancelled()
+                except asyncio.CancelledError:
+                    result.cancelled = True
+                    break
+                except Exception as exc:
+                    result.error_message = str(exc)
+                finally:
+                    if worker_context is not None:
+                        result.citations = list(worker_context.citations)
+                        web_pages_used = worker_context.web_pages_used
+                        visited_urls = set(worker_context.visited_urls)
+                        tool_output_chars = worker_context.tool_output_chars
+                    if worker_db is not None:
+                        worker_db.close()
+
+                result.web_pages_used = web_pages_used
+                result.visited_urls = set(visited_urls)
+                if result.cancelled:
+                    break
+                if not result.error_message and result.report.strip():
+                    break
+
+                result.error_message = (
+                    result.error_message or "Worker returned no report"
+                )
+                if attempt < profile.max_attempts:
+                    await queue.put(("retry", index, result.error_message))
+                    await asyncio.sleep(0)
         except asyncio.CancelledError:
             result.cancelled = True
-        except Exception as exc:
-            result.error_message = str(exc)
         finally:
-            if worker_context is not None:
-                result.citations = list(worker_context.citations)
-                result.web_pages_used = worker_context.web_pages_used
-                result.visited_urls = set(worker_context.visited_urls)
-            if worker_db is not None:
-                worker_db.close()
             await queue.put(("done", index, result))
 
     def _merge_worker_state(self, result: WorkerResult) -> dict[int, int]:

@@ -45,6 +45,7 @@ export type SSEEventType =
   | 'route_selected'
   | 'goal_created'
   | 'goal_running'
+  | 'goal_retrying'
   | 'goal_completed'
   | 'goal_failed'
   | 'goal_cancelled'
@@ -118,6 +119,8 @@ export interface GoalNodeData {
   status: GoalStatus;
   agent_profile: string;
   sequence: number;
+  attempt: number;
+  max_attempts: number;
   dependencies: string[];
   error_message: string | null;
   started_at: string | null;

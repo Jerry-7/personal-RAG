@@ -45,6 +45,8 @@ class AgentRegistryTests(unittest.TestCase):
         self.assertEqual(registry.require("expert_supervisor").allowed_tool_sources, all_sources)
         self.assertEqual(registry.require("fast_general").tool_call_budget, 2)
         self.assertEqual(registry.require("expert_supervisor").max_children, 4)
+        self.assertEqual(registry.require("local_retriever").max_attempts, 2)
+        self.assertEqual(registry.require("web_researcher").max_attempts, 2)
 
     def test_duplicate_and_invalid_profiles_are_rejected(self):
         registry = build_default_agent_registry()

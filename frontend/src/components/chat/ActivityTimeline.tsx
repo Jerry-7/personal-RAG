@@ -121,11 +121,18 @@ function GoalBranch({ goal, goals, steps, compact = false }: GoalBranchProps) {
         <span className="shrink-0 text-[10px] text-gray-400">
           {profileLabels[goal.agent_profile] || goal.agent_profile}
         </span>
+        {goal.attempt > 1 && (
+          <span className="shrink-0 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+            重试 {goal.attempt}/{goal.max_attempts}
+          </span>
+        )}
         <StatusIcon status={goal.status} />
       </div>
 
       {goal.error_message && (
-        <p className="ml-5 mt-1 text-[10px] leading-4 text-red-500">{goal.error_message}</p>
+        <p className={`ml-5 mt-1 text-[10px] leading-4 ${goal.status === 'running' ? 'text-amber-600 dark:text-amber-400' : 'text-red-500'}`}>
+          {goal.status === 'running' ? '上次尝试：' : ''}{goal.error_message}
+        </p>
       )}
 
       {!!goalSteps.length && (

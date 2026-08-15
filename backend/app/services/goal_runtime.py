@@ -33,6 +33,8 @@ def serialize_goal(node: GoalNode) -> dict[str, Any]:
         "status": node.status,
         "agent_profile": node.agent_profile,
         "sequence": node.sequence,
+        "attempt": node.attempt,
+        "max_attempts": node.max_attempts,
         "dependencies": json.loads(node.dependencies_json or "[]"),
         "error_message": node.error_message,
         "started_at": node.started_at.isoformat() if node.started_at else None,
@@ -103,9 +105,12 @@ class GoalRuntime:
         agent_profile: str,
         input_data: dict[str, Any],
         dependencies: list[str] | None = None,
+        max_attempts: int = 1,
     ) -> tuple[GoalNode, list[RunEvent]]:
         if parent.run_id != self.run_id:
             raise ValueError("Parent goal belongs to a different run")
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be positive")
         self._node_sequence += 1
         node = GoalNode(
             run_id=self.run_id,
@@ -115,6 +120,8 @@ class GoalRuntime:
             status="pending",
             agent_profile=agent_profile,
             sequence=self._node_sequence,
+            attempt=1,
+            max_attempts=max_attempts,
             dependencies_json=json.dumps(dependencies or []),
             input_json=json.dumps(input_data, ensure_ascii=False),
         )
@@ -151,14 +158,38 @@ class GoalRuntime:
             self.db.commit()
         return event
 
-    def _record(self, event_type: str, node: GoalNode) -> RunEvent:
+    def retry(self, node: GoalNode, error_message: str) -> RunEvent:
+        """Record another bounded attempt without leaving the running state."""
+        if node.status != "running":
+            raise ValueError(f"Cannot retry goal in {node.status} state")
+        if node.attempt >= node.max_attempts:
+            raise ValueError("Goal retry budget exhausted")
+
+        node.attempt += 1
+        node.error_message = error_message
+        event = self._record(
+            "goal_retrying",
+            node,
+            extra={"previous_error": error_message},
+        )
+        self.db.commit()
+        return event
+
+    def _record(
+        self,
+        event_type: str,
+        node: GoalNode,
+        *,
+        extra: dict[str, Any] | None = None,
+    ) -> RunEvent:
         self._sequence += 1
+        payload = {"goal": serialize_goal(node), **(extra or {})}
         event = RunEvent(
             run_id=self.run_id,
             node_id=node.id,
             sequence=self._sequence,
             event_type=event_type,
-            payload_json=json.dumps({"goal": serialize_goal(node)}, ensure_ascii=False),
+            payload_json=json.dumps(payload, ensure_ascii=False),
             created_at=datetime.now(timezone.utc),
         )
         self.db.add(event)

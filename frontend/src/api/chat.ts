@@ -96,6 +96,7 @@ export function streamChatQuery(
                   break;
                 case 'goal_created':
                 case 'goal_running':
+                case 'goal_retrying':
                 case 'goal_completed':
                 case 'goal_failed':
                 case 'goal_cancelled':

@@ -1,6 +1,10 @@
+import importlib.util
 import unittest
+from pathlib import Path
 
-from sqlalchemy import create_engine
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from app.db.database import Base
@@ -65,3 +69,70 @@ class GoalRuntimeTests(unittest.TestCase):
         self.assertEqual(child.parent_id, root.id)
         self.assertEqual(child.status, "running")
         self.assertEqual([event.sequence for event in events], [3, 4])
+        with self.assertRaises(ValueError):
+            runtime.create_child(
+                parent=root,
+                title="非法目标",
+                kind="agent",
+                agent_profile="standard_research",
+                input_data={},
+                max_attempts=0,
+            )
+
+    def test_retry_increments_attempt_without_leaving_running_state(self):
+        runtime = GoalRuntime(self.db, "run-retry")
+        root, _ = runtime.create_root(
+            title="复杂任务",
+            agent_profile="expert_supervisor",
+            input_data={},
+        )
+        child, _ = runtime.create_child(
+            parent=root,
+            title="检索本地知识",
+            kind="agent",
+            agent_profile="local_retriever",
+            input_data={},
+            max_attempts=2,
+        )
+
+        event = runtime.retry(child, "temporary failure")
+
+        self.assertEqual(child.status, "running")
+        self.assertEqual(child.attempt, 2)
+        self.assertEqual(child.max_attempts, 2)
+        self.assertEqual(event.event_type, "goal_retrying")
+        payload = serialize_event(event)["payload"]
+        self.assertEqual(payload["goal"]["attempt"], 2)
+        self.assertEqual(payload["previous_error"], "temporary failure")
+        with self.assertRaises(ValueError):
+            runtime.retry(child, "another failure")
+
+    def test_retry_migration_upgrades_legacy_goal_table(self):
+        engine = create_engine("sqlite:///:memory:")
+        migration_path = (
+            Path(__file__).parents[1]
+            / "alembic"
+            / "versions"
+            / "20260815_01_goal_retries.py"
+        )
+        spec = importlib.util.spec_from_file_location("goal_retry_migration", migration_path)
+        assert spec and spec.loader
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE goal_nodes (id VARCHAR(36) PRIMARY KEY)"
+            ))
+            migration.op = Operations(MigrationContext.configure(connection))
+            migration.upgrade()
+            migration.upgrade()
+            columns = {column["name"] for column in inspect(connection).get_columns("goal_nodes")}
+            self.assertIn("attempt", columns)
+            self.assertIn("max_attempts", columns)
+            connection.execute(text("INSERT INTO goal_nodes (id) VALUES ('goal')"))
+            row = connection.execute(text(
+                "SELECT attempt, max_attempts FROM goal_nodes WHERE id = 'goal'"
+            )).one()
+            self.assertEqual(tuple(row), (1, 1))
+        engine.dispose()

@@ -271,6 +271,8 @@ class GoalNode(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
     agent_profile: Mapped[str] = mapped_column(String(64), nullable=False, default="standard_research")
     sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     dependencies_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     input_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     output_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")

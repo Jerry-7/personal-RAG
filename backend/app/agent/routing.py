@@ -25,6 +25,7 @@ class AgentProfile:
     capabilities: frozenset[str] = field(default_factory=frozenset)
     max_iterations: int = 3
     tool_call_budget: int = 5
+    max_attempts: int = 1
     max_children: int = 0
     max_depth: int = 0
     allowed_tool_sources: frozenset[str] = field(default_factory=frozenset)
@@ -70,6 +71,8 @@ class AgentRegistry:
             raise ValueError("max_iterations must be positive")
         if profile.tool_call_budget < 1:
             raise ValueError("tool_call_budget must be positive")
+        if profile.max_attempts < 1:
+            raise ValueError("max_attempts must be positive")
         if profile.max_children < 0 or profile.max_depth < 0:
             raise ValueError("Agent child/depth limits cannot be negative")
         self._profiles[profile.name] = profile
@@ -234,6 +237,7 @@ def build_default_agent_registry() -> AgentRegistry:
             capabilities=frozenset({"local_retrieval", "tool_calling"}),
             max_iterations=3,
             tool_call_budget=4,
+            max_attempts=2,
             allowed_tool_sources=frozenset({"builtin", "skill", "web"}),
             model_key="standard",
         ),
@@ -244,6 +248,7 @@ def build_default_agent_registry() -> AgentRegistry:
             capabilities=frozenset({"web_research", "tool_calling"}),
             max_iterations=4,
             tool_call_budget=6,
+            max_attempts=2,
             allowed_tool_sources=frozenset({"builtin", "skill", "web"}),
             model_key="standard",
         ),
