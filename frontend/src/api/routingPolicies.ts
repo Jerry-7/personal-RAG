@@ -1,5 +1,7 @@
 import client from './client';
 import type {
+  RoutingPolicyConclusion,
+  RoutingPolicyConclusionDecision,
   RoutingPolicyCreateInput,
   RoutingPolicyEvaluation,
   RoutingPolicyReport,
@@ -52,6 +54,26 @@ export async function rollbackRoutingPolicy(
   const { data } = await client.post<RoutingPolicyVersion>(
     `/routing-policies/${version}/rollback`,
     input,
+  );
+  return data;
+}
+
+export async function concludeRoutingPolicy(
+  version: number,
+  decision: RoutingPolicyConclusionDecision,
+  expectedActiveVersion: number,
+  note?: string,
+): Promise<{
+  conclusion: RoutingPolicyConclusion;
+  resulting_policy: RoutingPolicyVersion | null;
+}> {
+  const { data } = await client.post(
+    `/routing-policies/${version}/conclude`,
+    {
+      decision,
+      expected_active_version: expectedActiveVersion,
+      note,
+    },
   );
   return data;
 }

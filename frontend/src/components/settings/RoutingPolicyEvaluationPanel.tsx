@@ -9,6 +9,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import type {
+  RoutingPolicyConclusionDecision,
   RoutingPolicyEvaluation,
   RoutingPolicyExperiment,
   RoutingPolicySimulation,
@@ -128,6 +129,10 @@ interface RoutingPolicyEvaluationPanelProps {
   isSimulating: boolean;
   canSimulate: boolean;
   onSimulate: () => void;
+  conclusionPending: RoutingPolicyConclusionDecision | null;
+  conclusionNote: string;
+  onConclusionNoteChange: (value: string) => void;
+  onConclude: (decision: RoutingPolicyConclusionDecision) => void;
 }
 
 export function RoutingPolicyEvaluationPanel({
@@ -136,6 +141,10 @@ export function RoutingPolicyEvaluationPanel({
   isSimulating,
   canSimulate,
   onSimulate,
+  conclusionPending,
+  conclusionNote,
+  onConclusionNoteChange,
+  onConclude,
 }: RoutingPolicyEvaluationPanelProps) {
   if (!evaluation || !simulation) {
     return (
@@ -144,6 +153,20 @@ export function RoutingPolicyEvaluationPanel({
       </div>
     );
   }
+
+  const experiment = evaluation.experiment;
+  const canConclude = ['ready', 'operational_alert'].includes(experiment.status)
+    && experiment.conclusion === null;
+  const requiresNote = (decision: RoutingPolicyConclusionDecision) => (
+    experiment.recommendation === 'review'
+    || (['keep', 'rollback'].includes(experiment.recommendation)
+      && experiment.recommendation !== decision)
+  );
+  const conclusionDisabled = (decision: RoutingPolicyConclusionDecision) => (
+    conclusionPending !== null
+    || (decision === 'keep' && experiment.status === 'operational_alert')
+    || (requiresNote(decision) && conclusionNote.trim().length === 0)
+  );
 
   return (
     <section className="space-y-3 border-t border-gray-200 pt-4 dark:border-gray-700">
@@ -200,6 +223,63 @@ export function RoutingPolicyEvaluationPanel({
       </div>
 
       <ExperimentSummary experiment={evaluation.experiment} />
+
+      {canConclude && (
+        <div className="space-y-2 border-b border-gray-200 pb-3 dark:border-gray-700">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              value={conclusionNote}
+              maxLength={512}
+              onChange={(event) => onConclusionNoteChange(event.target.value)}
+              placeholder="结论备注（偏离建议或人工复核时必填）"
+              className="h-8 min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 text-xs dark:border-gray-600 dark:bg-gray-800"
+            />
+            <div className="flex shrink-0 gap-2">
+              <button
+                type="button"
+                title="保留当前路由策略"
+                onClick={() => onConclude('keep')}
+                disabled={conclusionDisabled('keep')}
+                className="flex h-8 items-center gap-1.5 rounded border border-green-600 px-2.5 text-[11px] font-medium text-green-700 hover:bg-green-50 disabled:opacity-40 dark:text-green-400 dark:hover:bg-green-950/30"
+              >
+                {conclusionPending === 'keep'
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : <CheckCircle2 className="h-3 w-3" />}
+                保留
+              </button>
+              <button
+                type="button"
+                title="回滚到实验基线策略"
+                onClick={() => onConclude('rollback')}
+                disabled={conclusionDisabled('rollback')}
+                className="flex h-8 items-center gap-1.5 rounded border border-red-500 px-2.5 text-[11px] font-medium text-red-600 hover:bg-red-50 disabled:opacity-40 dark:text-red-400 dark:hover:bg-red-950/30"
+              >
+                {conclusionPending === 'rollback'
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : <RotateCcw className="h-3 w-3" />}
+                回滚
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {evaluation.conclusions.length > 0 && (
+        <div className="space-y-1 text-[10px] text-gray-500">
+          <p className="font-medium text-gray-600 dark:text-gray-300">最近实验结论</p>
+          {evaluation.conclusions.slice(0, 3).map((conclusion) => (
+            <div key={conclusion.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className={conclusion.decision === 'keep' ? 'text-green-600' : 'text-red-500'}>
+                v{conclusion.policy_version} {conclusion.decision === 'keep' ? '保留' : '回滚'}
+              </span>
+              {conclusion.resulting_policy_version !== null && (
+                <span>生成 v{conclusion.resulting_policy_version}</span>
+              )}
+              {conclusion.note && <span className="min-w-0 break-words text-gray-400">{conclusion.note}</span>}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-gray-500">
         <span className="font-medium text-gray-600 dark:text-gray-300">

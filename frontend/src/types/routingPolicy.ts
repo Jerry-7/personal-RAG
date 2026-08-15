@@ -72,7 +72,21 @@ export interface RoutingPolicyEvaluation {
   current_policy: RoutingPolicyVersion;
   observed_versions: RoutingPolicyObservedVersion[];
   experiment: RoutingPolicyExperiment;
+  conclusions: RoutingPolicyConclusion[];
   simulation: RoutingPolicySimulation;
+}
+
+export type RoutingPolicyConclusionDecision = 'keep' | 'rollback';
+
+export interface RoutingPolicyConclusion {
+  id: string;
+  policy_version: number;
+  baseline_version: number;
+  decision: RoutingPolicyConclusionDecision;
+  resulting_policy_version: number | null;
+  evidence: Record<string, unknown>;
+  note: string | null;
+  created_at: string | null;
 }
 
 export interface RoutingPolicyExperiment {
@@ -97,4 +111,5 @@ export interface RoutingPolicyExperiment {
   };
   recommendation: 'not_applicable' | 'collect_runs' | 'collect_feedback' | 'rollback' | 'keep' | 'review';
   reason_codes: string[];
+  conclusion: RoutingPolicyConclusion | null;
 }

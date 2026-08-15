@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Check, Loader2, RotateCcw, Save } from 'lucide-react';
 import {
+  concludeRoutingPolicy,
   createRoutingPolicy,
   getRoutingPolicies,
   getRoutingPolicyEvaluation,
@@ -8,6 +9,7 @@ import {
   simulateRoutingPolicy,
 } from '../../api/routingPolicies';
 import type {
+  RoutingPolicyConclusionDecision,
   RoutingPolicyEvaluation,
   RoutingPolicyReport,
   RoutingPolicySimulation,
@@ -39,6 +41,8 @@ export function RoutingPolicySettings() {
   const [expertMin, setExpertMin] = useState(4);
   const [note, setNote] = useState('');
   const [pending, setPending] = useState<'create' | number | null>(null);
+  const [conclusionPending, setConclusionPending] = useState<RoutingPolicyConclusionDecision | null>(null);
+  const [conclusionNote, setConclusionNote] = useState('');
   const [isSimulating, setIsSimulating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -77,7 +81,7 @@ export function RoutingPolicySettings() {
   }, []);
 
   const activate = async () => {
-    if (!report || pending !== null) return;
+    if (!report || pending !== null || conclusionPending !== null) return;
     setPending('create');
     setMessage(null);
     try {
@@ -100,7 +104,7 @@ export function RoutingPolicySettings() {
   };
 
   const rollback = async (version: number) => {
-    if (!report || pending !== null || version === report.current.version) return;
+    if (!report || pending !== null || conclusionPending !== null || version === report.current.version) return;
     setPending(version);
     setMessage(null);
     try {
@@ -116,6 +120,33 @@ export function RoutingPolicySettings() {
       setMessage('回滚未执行，当前版本已刷新');
     } finally {
       setPending(null);
+    }
+  };
+
+  const concludeExperiment = async (decision: RoutingPolicyConclusionDecision) => {
+    if (!report || !evaluation || pending !== null || conclusionPending !== null) return;
+    const experiment = evaluation.experiment;
+    if (!['ready', 'operational_alert'].includes(experiment.status)) return;
+    setConclusionPending(decision);
+    setMessage(null);
+    try {
+      const result = await concludeRoutingPolicy(
+        experiment.current_policy_version,
+        decision,
+        report.current.version,
+        conclusionNote.trim() || undefined,
+      );
+      await refresh();
+      setConclusionNote('');
+      setMessage(result.resulting_policy
+        ? `实验已结论回滚，新策略 v${result.resulting_policy.version} 已激活`
+        : `策略 v${result.conclusion.policy_version} 已结论保留`);
+    } catch (error) {
+      console.error('提交路由实验结论失败', error);
+      await refresh().catch(() => undefined);
+      setMessage('结论未提交，实验状态与当前策略已刷新');
+    } finally {
+      setConclusionPending(null);
     }
   };
 
@@ -203,7 +234,7 @@ export function RoutingPolicySettings() {
           <button
             type="button"
             onClick={activate}
-            disabled={!valid || !changed || pending !== null}
+            disabled={!valid || !changed || pending !== null || conclusionPending !== null}
             className="flex h-9 shrink-0 items-center gap-1.5 rounded bg-blue-600 px-3 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40"
           >
             {pending === 'create' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
@@ -219,6 +250,10 @@ export function RoutingPolicySettings() {
         isSimulating={isSimulating}
         canSimulate={valid}
         onSimulate={simulate}
+        conclusionPending={conclusionPending}
+        conclusionNote={conclusionNote}
+        onConclusionNoteChange={setConclusionNote}
+        onConclude={concludeExperiment}
       />
 
       <section>
@@ -242,7 +277,7 @@ export function RoutingPolicySettings() {
                   type="button"
                   title={`恢复策略 v${item.version}`}
                   onClick={() => rollback(item.version)}
-                  disabled={pending !== null}
+                  disabled={pending !== null || conclusionPending !== null}
                   className="flex h-8 w-8 shrink-0 items-center justify-center rounded hover:bg-gray-100 disabled:opacity-40 dark:hover:bg-gray-800"
                 >
                   {pending === item.version
