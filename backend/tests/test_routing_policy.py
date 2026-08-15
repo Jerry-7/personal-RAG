@@ -19,7 +19,24 @@ from app.services.routing_policy import (
     list_routing_policies,
     rollback_routing_policy,
 )
-from app.services.routing_policy_evaluation import simulate_routing_policy
+from app.services.routing_policy_evaluation import (
+    build_policy_experiment,
+    simulate_routing_policy,
+)
+
+
+def observed_policy(version, **overrides):
+    metrics = {
+        "terminal_run_count": 10,
+        "rated_run_count": 5,
+        "operational_success_rate": 95.0,
+        "average_duration_ms": 1000,
+        "tool_failure_rate": 5.0,
+        "tool_budget_utilization": 50.0,
+        "user_satisfaction_rate": 90.0,
+    }
+    metrics.update(overrides)
+    return {"version": version, "metrics": metrics}
 
 
 class RoutingPolicyTests(unittest.TestCase):
@@ -50,6 +67,7 @@ class RoutingPolicyTests(unittest.TestCase):
             note="conservative trial",
         )
         self.assertEqual(first.version, 1)
+        self.assertEqual(first.based_on_version, 0)
         self.assertEqual(get_active_routing_policy(self.db), RoutingPolicy(1, 3, 5))
 
         with self.assertRaises(RoutingPolicyConflict):
@@ -155,6 +173,53 @@ class RoutingPolicyTests(unittest.TestCase):
                 standard_min_score=5,
                 expert_min_score=3,
             )
+
+    def test_experiment_collects_runs_then_feedback(self):
+        policy = {"version": 2, "source": "manual", "based_on_version": 1}
+        collecting = build_policy_experiment(
+            policy,
+            [observed_policy(2, terminal_run_count=4, rated_run_count=1)],
+        )
+        awaiting_feedback = build_policy_experiment(
+            policy,
+            [observed_policy(2, rated_run_count=2)],
+        )
+
+        self.assertEqual(collecting["status"], "collecting")
+        self.assertEqual(collecting["recommendation"], "collect_runs")
+        self.assertEqual(awaiting_feedback["status"], "awaiting_feedback")
+        self.assertEqual(awaiting_feedback["recommendation"], "collect_feedback")
+
+    def test_experiment_flags_severe_operational_regression_early(self):
+        result = build_policy_experiment(
+            {"version": 2, "source": "manual", "based_on_version": 1},
+            [
+                observed_policy(1, operational_success_rate=95.0),
+                observed_policy(
+                    2,
+                    rated_run_count=0,
+                    operational_success_rate=65.0,
+                ),
+            ],
+        )
+
+        self.assertEqual(result["status"], "operational_alert")
+        self.assertEqual(result["recommendation"], "rollback")
+        self.assertEqual(result["comparison"]["operational_success_rate_delta"], -30.0)
+
+    def test_ready_experiment_keeps_stable_policy_and_rejects_low_quality(self):
+        policy = {"version": 2, "source": "manual", "based_on_version": 1}
+        baseline = observed_policy(1)
+        stable = build_policy_experiment(policy, [baseline, observed_policy(2)])
+        low_quality = build_policy_experiment(
+            policy,
+            [baseline, observed_policy(2, user_satisfaction_rate=40.0)],
+        )
+
+        self.assertEqual(stable["status"], "ready")
+        self.assertEqual(stable["recommendation"], "keep")
+        self.assertEqual(low_quality["recommendation"], "rollback")
+        self.assertIn("quality_regression", low_quality["reason_codes"])
 
 
 class RoutingPolicyMigrationTests(unittest.TestCase):

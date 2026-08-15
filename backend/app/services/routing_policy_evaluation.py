@@ -13,10 +13,141 @@ from app.services.routing_policy import DEFAULT_ROUTING_POLICY, serialize_policy
 
 _TIERS: tuple[AgentTier, ...] = ("fast", "standard", "expert")
 _TIER_ORDER = {tier: index for index, tier in enumerate(_TIERS)}
+MIN_EXPERIMENT_TERMINAL_RUNS = 10
+MIN_EXPERIMENT_RATED_RUNS = 5
 
 
 def _empty_tier_counts() -> dict[AgentTier, int]:
     return {tier: 0 for tier in _TIERS}
+
+
+def _difference(current: float | int | None, baseline: float | int | None):
+    if current is None or baseline is None:
+        return None
+    return round(current - baseline, 1)
+
+
+def build_policy_experiment(
+    current_policy: dict[str, Any],
+    observed_versions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Derive a guarded experiment state without mutating routing policy."""
+    version = current_policy["version"]
+    baseline_version = current_policy.get("based_on_version")
+    source = current_policy.get("source")
+    metrics_by_version = {
+        item["version"]: item["metrics"] for item in observed_versions
+    }
+    current = metrics_by_version.get(version)
+    baseline = metrics_by_version.get(baseline_version)
+    terminal_count = int(current["terminal_run_count"]) if current else 0
+    rated_count = int(current["rated_run_count"]) if current else 0
+    operational_ready = terminal_count >= MIN_EXPERIMENT_TERMINAL_RUNS
+    feedback_ready = rated_count >= MIN_EXPERIMENT_RATED_RUNS
+    comparison = {
+        "available": baseline is not None,
+        "operational_success_rate_delta": _difference(
+            current["operational_success_rate"] if current else None,
+            baseline["operational_success_rate"] if baseline else None,
+        ),
+        "average_duration_ms_delta": _difference(
+            current["average_duration_ms"] if current else None,
+            baseline["average_duration_ms"] if baseline else None,
+        ),
+        "tool_failure_rate_delta": _difference(
+            current["tool_failure_rate"] if current else None,
+            baseline["tool_failure_rate"] if baseline else None,
+        ),
+        "tool_budget_utilization_delta": _difference(
+            current["tool_budget_utilization"] if current else None,
+            baseline["tool_budget_utilization"] if baseline else None,
+        ),
+        "user_satisfaction_rate_delta": (
+            _difference(
+                current["user_satisfaction_rate"],
+                baseline["user_satisfaction_rate"],
+            )
+            if current
+            and baseline
+            and current["rated_run_count"] > 0
+            and baseline["rated_run_count"] > 0
+            else None
+        ),
+    }
+
+    status = "collecting"
+    recommendation = "collect_runs"
+    reasons: list[str] = []
+    if baseline_version is None or source in {"default", "rollback"}:
+        status = "not_applicable"
+        recommendation = "not_applicable"
+        reasons.append("no_experiment_baseline")
+    elif not operational_ready:
+        reasons.append("insufficient_terminal_runs")
+    else:
+        severe_operational_regression = (
+            current["operational_success_rate"] < 70
+            or (
+                comparison["operational_success_rate_delta"] is not None
+                and comparison["operational_success_rate_delta"] <= -15
+            )
+        )
+        if severe_operational_regression:
+            status = "operational_alert"
+            recommendation = "rollback"
+            reasons.append("severe_operational_regression")
+        elif not feedback_ready:
+            status = "awaiting_feedback"
+            recommendation = "collect_feedback"
+            reasons.append("insufficient_rated_runs")
+        else:
+            status = "ready"
+            quality_regression = (
+                current["user_satisfaction_rate"] < 60
+                or (
+                    comparison["user_satisfaction_rate_delta"] is not None
+                    and comparison["user_satisfaction_rate_delta"] <= -10
+                )
+            )
+            operational_regression = (
+                current["operational_success_rate"] < 80
+                or (
+                    comparison["operational_success_rate_delta"] is not None
+                    and comparison["operational_success_rate_delta"] <= -10
+                )
+            )
+            if quality_regression or operational_regression:
+                recommendation = "rollback"
+                if operational_regression:
+                    reasons.append("operational_regression")
+                if quality_regression:
+                    reasons.append("quality_regression")
+            elif (
+                current["operational_success_rate"] >= 90
+                and current["user_satisfaction_rate"] >= 80
+            ):
+                recommendation = "keep"
+                reasons.append("stable_improvement")
+            else:
+                recommendation = "review"
+                reasons.append("mixed_results")
+
+    return {
+        "status": status,
+        "current_policy_version": version,
+        "baseline_policy_version": baseline_version,
+        "readiness": {
+            "minimum_terminal_runs": MIN_EXPERIMENT_TERMINAL_RUNS,
+            "minimum_rated_runs": MIN_EXPERIMENT_RATED_RUNS,
+            "terminal_run_count": terminal_count,
+            "rated_run_count": rated_count,
+            "operational_ready": operational_ready,
+            "feedback_ready": feedback_ready,
+        },
+        "comparison": comparison,
+        "recommendation": recommendation,
+        "reason_codes": reasons,
+    }
 
 
 def simulate_routing_policy(
@@ -162,9 +293,15 @@ def build_routing_policy_evaluation(
         if candidate_expert_min_score is None
         else candidate_expert_min_score
     )
+    current_policy_record = policies.get(
+        current_policy.version,
+        DEFAULT_ROUTING_POLICY if current_policy.version == 0 else current_policy,
+    )
+    current_policy_data = serialize_policy(current_policy_record)
     return {
-        "current_policy": serialize_policy(current_policy),
+        "current_policy": current_policy_data,
         "observed_versions": observed,
+        "experiment": build_policy_experiment(current_policy_data, observed),
         "simulation": simulate_routing_policy(
             runs,
             standard_min_score=standard_min_score,

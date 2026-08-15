@@ -90,6 +90,8 @@ def create_routing_policy(
             f"active policy changed from version {expected_active_version} "
             f"to {active.version}"
         )
+    if source == "manual" and based_on_version is None:
+        based_on_version = active.version
     next_version = int(
         db.query(func.coalesce(func.max(RoutingPolicyVersion.version), 0)).scalar()
     ) + 1
