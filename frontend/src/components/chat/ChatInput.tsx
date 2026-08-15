@@ -7,8 +7,8 @@
 
 import { useState, useRef, useCallback } from 'react';
 import type { KeyboardEvent } from 'react';
-import { Send, Square } from 'lucide-react';
-import type { ChatMode } from '../../types/chat';
+import { Gauge, Send, Square } from 'lucide-react';
+import type { AgentTierPreference, ChatMode } from '../../types/chat';
 import { useChatStore } from '../../store/chatStore';
 import { useDocumentStore } from '../../store/documentStore';
 import { useNoteStore } from '../../store/noteStore';
@@ -17,6 +17,7 @@ import { startChatQuery, stopChatExecution } from '../../services/chatExecution'
 export function ChatInput() {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<ChatMode>('auto');
+  const [agentTier, setAgentTier] = useState<AgentTierPreference>('auto');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const conversationId = useChatStore((s) => s.conversationId);
@@ -32,8 +33,8 @@ export function ChatInput() {
     if (!text || isStreaming || isLoadingHistory) return;
 
     setInput('');
-    startChatQuery(text, conversationId, mode);
-  }, [input, isStreaming, isLoadingHistory, conversationId, mode]);
+    startChatQuery(text, conversationId, mode, agentTier);
+  }, [input, isStreaming, isLoadingHistory, conversationId, mode, agentTier]);
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -48,12 +49,29 @@ export function ChatInput() {
 
   return (
     <div className="border-t border-gray-200 dark:border-gray-700 p-4">
-      <div className="mx-auto mb-2 flex max-w-3xl items-center gap-1" role="group" aria-label="研究模式">
-        {(['auto', 'local', 'web'] as ChatMode[]).map((item) => (
-          <button key={item} onClick={() => setMode(item)} disabled={isStreaming} className={`h-7 min-w-14 px-2 text-xs disabled:opacity-50 ${mode === item ? 'bg-gray-800 text-white dark:bg-gray-100 dark:text-gray-900' : 'border border-gray-200 text-gray-500 dark:border-gray-700'} ${item === 'auto' ? 'rounded-l' : item === 'web' ? 'rounded-r' : ''}`}>
-            {{ auto: '自动', local: '本地', web: '网页' }[item]}
-          </button>
-        ))}
+      <div className="mx-auto mb-2 flex max-w-3xl items-center justify-between gap-2">
+        <div className="flex items-center gap-1" role="group" aria-label="研究模式">
+          {(['auto', 'local', 'web'] as ChatMode[]).map((item) => (
+            <button key={item} onClick={() => setMode(item)} disabled={isStreaming} className={`h-7 min-w-14 px-2 text-xs disabled:opacity-50 ${mode === item ? 'bg-gray-800 text-white dark:bg-gray-100 dark:text-gray-900' : 'border border-gray-200 text-gray-500 dark:border-gray-700'} ${item === 'auto' ? 'rounded-l' : item === 'web' ? 'rounded-r' : ''}`}>
+              {{ auto: '自动', local: '本地', web: '网页' }[item]}
+            </button>
+          ))}
+        </div>
+        <label className="flex min-w-0 items-center gap-1 text-gray-500 dark:text-gray-400">
+          <Gauge className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <select
+            aria-label="Agent 等级"
+            value={agentTier}
+            onChange={(event) => setAgentTier(event.target.value as AgentTierPreference)}
+            disabled={isStreaming}
+            className="h-7 min-w-0 rounded border border-gray-200 bg-white px-2 text-xs text-gray-600 outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
+          >
+            <option value="auto">Agent 自动</option>
+            <option value="fast">Agent 快速</option>
+            <option value="standard">Agent 标准</option>
+            <option value="expert">Agent 专家</option>
+          </select>
+        </label>
       </div>
       <div className="flex items-end gap-2 max-w-3xl mx-auto">
         <textarea

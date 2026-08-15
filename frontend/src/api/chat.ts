@@ -6,7 +6,7 @@
  * Agent 模式附加 tool_call/tool_result 事件。
  */
 
-import type { CitationData, ChatMode, ConversationDetail, ConversationSummary, RouteSelection, RunEventData, SSEDoneEvent } from '../types/chat';
+import type { AgentTierPreference, CitationData, ChatMode, ConversationDetail, ConversationSummary, RouteSelection, RunEventData, SSEDoneEvent } from '../types/chat';
 import type { NoteItem } from '../types/note';
 import client from './client';
 import { streamSSE } from './sse';
@@ -116,10 +116,11 @@ export function streamChatQuery(
   question: string,
   conversationId: string | null,
   mode: ChatMode,
+  agentTier: AgentTierPreference,
   callbacks: ChatStreamCallbacks
 ): AbortController {
   return streamChatRequest(
-    { question, conversation_id: conversationId, mode },
+    { question, conversation_id: conversationId, mode, agent_tier: agentTier },
     callbacks
   );
 }

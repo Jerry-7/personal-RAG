@@ -9,7 +9,7 @@ import type { ChatStreamCallbacks } from '../api/chat';
 import { useChatStore } from '../store/chatStore';
 import { useNoteStore } from '../store/noteStore';
 import { useSidebarStore } from '../store/sidebarStore';
-import type { ChatMode } from '../types/chat';
+import type { AgentTierPreference, ChatMode } from '../types/chat';
 import { restoreConversationRuns } from './runHistory';
 
 let activeController: AbortController | null = null;
@@ -70,6 +70,7 @@ export function startChatQuery(
   question: string,
   conversationId: string | null,
   mode: ChatMode,
+  agentTier: AgentTierPreference,
 ): AbortController {
   const state = useChatStore.getState();
   state.addUserMessage(question);
@@ -78,6 +79,7 @@ export function startChatQuery(
     question,
     conversationId,
     mode,
+    agentTier,
     callbacks(),
   );
   return activeController;

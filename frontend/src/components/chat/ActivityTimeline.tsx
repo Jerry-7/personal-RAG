@@ -60,6 +60,7 @@ const reasonLabels: Record<string, string> = {
   long_context: '长上下文',
   simple_fact_intent: '简单事实',
   tool_access_required: '需要工具',
+  manual_tier_override: '手动指定',
 };
 
 const runStatusLabels = {

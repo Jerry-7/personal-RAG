@@ -110,6 +110,7 @@ export interface RouteSelection {
   requires_decomposition: boolean;
   max_children: number;
   max_depth: number;
+  tier_preference: AgentTierPreference;
 }
 
 export type GoalStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -212,3 +213,4 @@ export interface ConversationDetail extends Omit<ConversationSummary, 'message_c
 }
 
 export type ChatMode = 'auto' | 'local' | 'web';
+export type AgentTierPreference = 'auto' | 'fast' | 'standard' | 'expert';
