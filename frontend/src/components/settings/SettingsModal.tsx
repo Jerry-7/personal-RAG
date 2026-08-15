@@ -10,8 +10,9 @@ import { X, Check, Eye, EyeOff } from 'lucide-react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { getSettings, updateSettings, getAvailableModels } from '../../api/settings';
 import type { AppSettings, AvailableModels } from '../../types/settings';
+import { RoutingPolicySettings } from './RoutingPolicySettings';
 
-type TabKey = 'llm' | 'embedding' | 'rag' | 'web';
+type TabKey = 'llm' | 'embedding' | 'rag' | 'web' | 'routing';
 type AgentTierKey = 'fast' | 'standard' | 'expert';
 
 const agentTierLabels: Record<AgentTierKey, string> = {
@@ -80,11 +81,12 @@ export function SettingsModal() {
     { key: 'embedding', label: 'Embedding' },
     { key: 'rag', label: 'RAG 参数' },
     { key: 'web', label: '网页研究' },
+    { key: 'routing', label: '路由策略' },
   ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white dark:bg-gray-900 rounded-2xl w-full max-w-lg shadow-2xl">
+      <div className="mx-4 w-full max-w-2xl rounded-lg bg-white shadow-2xl dark:bg-gray-900">
         {/* 头部 */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">设置</h2>
@@ -315,6 +317,8 @@ export function SettingsModal() {
               </div>
             </>
           )}
+
+          {activeTab === 'routing' && <RoutingPolicySettings />}
         </div>
 
         {/* 底部按钮 */}
@@ -325,14 +329,16 @@ export function SettingsModal() {
           >
             取消
           </button>
-          <button
-            onClick={handleSave}
-            disabled={isSaving}
-            className="px-4 py-2 text-sm rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors flex items-center gap-2"
-          >
-            <Check className="w-4 h-4" />
-            {isSaving ? '保存中...' : '保存'}
-          </button>
+          {activeTab !== 'routing' && (
+            <button
+              onClick={handleSave}
+              disabled={isSaving}
+              className="px-4 py-2 text-sm rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors flex items-center gap-2"
+            >
+              <Check className="w-4 h-4" />
+              {isSaving ? '保存中...' : '保存'}
+            </button>
+          )}
         </div>
       </div>
     </div>

@@ -591,6 +591,7 @@ export function ActivityTimeline() {
                     <span className="font-medium text-gray-600 dark:text-gray-300">
                       {tierLabels[item.tier]} · {recommendationLabels[item.action]}
                     </span>
+                    <span className="tabular-nums">策略 v{item.policy_version}</span>
                     <span>{confidenceLabels[item.confidence]}</span>
                     <span>
                       {item.reason_codes.map((reason) => recommendationReasonLabels[reason] || reason).join(' · ')}
@@ -613,6 +614,11 @@ export function ActivityTimeline() {
             ) : (
               <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 text-[10px] text-gray-400">
                 <Lightbulb className="h-3.5 w-3.5 shrink-0" />
+                {routingAnalytics.recommendation_report.policy_version !== null && (
+                  <span className="tabular-nums">
+                    策略 v{routingAnalytics.recommendation_report.policy_version}
+                  </span>
+                )}
                 <span className="tabular-nums">
                   运行样本 {routingAnalytics.recommendation_report.readiness.terminal_run_count}/{routingAnalytics.recommendation_report.readiness.minimum_terminal_runs}
                 </span>
@@ -657,7 +663,7 @@ export function ActivityTimeline() {
                   {tierLabels[routeSelection.tier]} · {routeLabels[routeSelection.route]}
                 </span>
                 <span className="shrink-0 tabular-nums text-[10px] text-gray-400">
-                  评分 {routeSelection.score} · 工具 ≤ {routeSelection.tool_call_budget}
+                  策略 v{routeSelection.policy_version} · 评分 {routeSelection.score} · 工具 ≤ {routeSelection.tool_call_budget}
                 </span>
                 {routeSelection.model_name && (
                   <span

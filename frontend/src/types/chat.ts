@@ -113,6 +113,7 @@ export interface RouteSelection {
   observed_max_children?: number;
   observed_max_depth?: number;
   tier_preference: AgentTierPreference;
+  policy_version: number;
 }
 
 export type GoalStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -244,6 +245,7 @@ export interface RoutingAnalyticsMetrics {
 }
 
 export interface RoutingAnalyticsGroup extends RoutingAnalyticsMetrics {
+  policy_version: number;
   tier: 'fast' | 'standard' | 'expert';
   route: 'direct' | 'tool_agent' | 'supervisor';
   planning_source: 'model' | 'fallback' | 'mixed' | 'not_applicable';
@@ -260,6 +262,7 @@ export type RoutingRecommendationAction =
   | 'keep_policy';
 
 export interface RoutingRecommendation {
+  policy_version: number;
   tier: 'fast' | 'standard' | 'expert';
   route: 'direct' | 'tool_agent' | 'supervisor';
   planning_source: 'model' | 'fallback' | 'mixed' | 'not_applicable';
@@ -277,6 +280,7 @@ export interface RoutingRecommendation {
 }
 
 export interface RoutingRecommendationReport {
+  policy_version: number | null;
   readiness: {
     minimum_terminal_runs: number;
     minimum_rated_runs: number;
