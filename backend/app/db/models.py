@@ -245,6 +245,9 @@ class AgentRun(Base):
         nullable=True, index=True,
     )
     mode: Mapped[str] = mapped_column(String(16), nullable=False, default="auto")
+    route_tier_preference: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="auto"
+    )
     agent_profile: Mapped[str] = mapped_column(String(64), nullable=False, default="standard_research")
     route_tier: Mapped[str] = mapped_column(String(16), nullable=False, default="standard")
     route_name: Mapped[str] = mapped_column(String(32), nullable=False, default="tool_agent")

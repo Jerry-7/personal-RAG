@@ -99,6 +99,7 @@ def _routing(run: AgentRun, goals: list[GoalNode]) -> dict[str, Any]:
         "requires_decomposition": run.route_requires_decomposition,
         "max_children": max_children,
         "max_depth": max_depth,
+        "tier_preference": run.route_tier_preference,
     }
 
 

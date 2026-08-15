@@ -171,3 +171,33 @@ class ModelRoutingMigrationTests(unittest.TestCase):
                 {column["name"] for column in inspect(connection).get_columns("goal_nodes")},
             )
         engine.dispose()
+
+
+class AgentTierPreferenceMigrationTests(unittest.TestCase):
+    def test_tier_preference_migration_defaults_legacy_runs_to_auto(self):
+        engine = create_engine("sqlite:///:memory:")
+        migration_path = (
+            Path(__file__).parents[1]
+            / "alembic"
+            / "versions"
+            / "20260815_05_agent_tier_preference.py"
+        )
+        spec = importlib.util.spec_from_file_location("tier_preference_migration", migration_path)
+        assert spec and spec.loader
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE agent_runs (id VARCHAR(36) PRIMARY KEY)"
+            ))
+            connection.execute(text("INSERT INTO agent_runs VALUES ('legacy-run')"))
+            migration.op = Operations(MigrationContext.configure(connection))
+            migration.upgrade()
+            migration.upgrade()
+
+            preference = connection.execute(text(
+                "SELECT route_tier_preference FROM agent_runs WHERE id = 'legacy-run'"
+            )).scalar_one()
+            self.assertEqual(preference, "auto")
+        engine.dispose()

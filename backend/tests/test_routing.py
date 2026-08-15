@@ -1,4 +1,6 @@
+import json
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from app.agent.context import AgentRunContext
@@ -34,6 +36,41 @@ class ComplexityRouterTests(unittest.TestCase):
         self.assertEqual(decision.route, "supervisor")
         self.assertTrue(decision.requires_decomposition)
         self.assertEqual(decision.max_depth, 2)
+
+    def test_table_driven_routing_evaluation_cases(self):
+        fixture_path = Path(__file__).parent / "fixtures" / "routing_cases.json"
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                decision = self.router.route(case["question"], mode=case["mode"])
+                self.assertEqual(decision.tier, case["expected_tier"])
+                self.assertEqual(decision.route, case["expected_route"])
+                self.assertEqual(decision.tier_preference, "auto")
+
+    def test_manual_tier_override_is_deterministic(self):
+        expected = {
+            "fast": ("direct", 0, False),
+            "standard": ("tool_agent", 2, False),
+            "expert": ("supervisor", 4, True),
+        }
+        for tier, (route, score, decomposition) in expected.items():
+            with self.subTest(tier=tier):
+                decision = self.router.route(
+                    "请比较多个来源并生成报告",
+                    mode="web",
+                    tier_preference=tier,
+                )
+                self.assertEqual(decision.tier, tier)
+                self.assertEqual(decision.route, route)
+                self.assertEqual(decision.score, score)
+                self.assertEqual(decision.requires_decomposition, decomposition)
+                self.assertEqual(decision.tier_preference, tier)
+                self.assertEqual(decision.reasons, ("manual_tier_override",))
+
+    def test_invalid_manual_tier_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "tier_preference"):
+            self.router.route("question", tier_preference="invalid")
 
 
 class AgentRegistryTests(unittest.TestCase):

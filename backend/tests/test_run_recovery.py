@@ -90,6 +90,8 @@ class RunRecoveryTests(unittest.TestCase):
         )
         self.db.commit()
         source_run = self._run("failed-run", original.id, "failed")
+        source_run.route_tier_preference = "expert"
+        self.db.commit()
 
         source = resolve_retry_source(self.db, source_run.id)
         context = conversation_memory.get_context_before(
@@ -100,6 +102,7 @@ class RunRecoveryTests(unittest.TestCase):
 
         self.assertEqual(source.user_message.content, "original question")
         self.assertEqual(source.run.mode, "web")
+        self.assertEqual(source.run.route_tier_preference, "expert")
         self.assertEqual(context, [{"role": "assistant", "content": "prior context"}])
 
     def test_active_retry_blocks_duplicate_replay(self):
@@ -298,6 +301,7 @@ class RunReplayGeneratorTests(unittest.IsolatedAsyncioTestCase):
             conversation_id=self.conversation.id,
             user_message_id=self.user_message.id,
             mode="auto",
+            route_tier_preference="fast",
             status="failed",
         )
         self.db.add_all([self.conversation, self.user_message, self.source_run])
@@ -337,6 +341,7 @@ class RunReplayGeneratorTests(unittest.IsolatedAsyncioTestCase):
                     [],
                     "auto",
                     self.user_message.id,
+                    tier_preference=self.source_run.route_tier_preference,
                     retry_of_run_id=self.source_run.id,
                 )
             ]
@@ -351,6 +356,7 @@ class RunReplayGeneratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(retried_run.status, "completed")
         self.assertEqual(retried_run.user_message_id, self.user_message.id)
         self.assertEqual(retried_run.model_name, "fast-replay-model")
+        self.assertEqual(retried_run.route_tier_preference, "fast")
         self.assertEqual(provider.model, "fast-replay-model")
         self.assertEqual(len(user_messages), 1)
         self.assertTrue(any(event["event"] == "done" for event in events))

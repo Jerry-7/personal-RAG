@@ -13,6 +13,7 @@ from app.agent.loop import AgentLoop
 from app.agent.routing import (
     AgentProfile,
     AgentRegistry,
+    AgentTierPreference,
     ComplexityRouter,
     RouteDecision,
     build_default_agent_registry,
@@ -26,6 +27,7 @@ __all__ = [
     "AgentLoop",
     "AgentProfile",
     "AgentRegistry",
+    "AgentTierPreference",
     "ComplexityRouter",
     "RouteDecision",
     "Supervisor",

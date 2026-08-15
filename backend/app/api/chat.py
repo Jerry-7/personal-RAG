@@ -93,6 +93,7 @@ async def chat_query(
         question = retry_source.user_message.content.strip()
         conversation_id = retry_source.conversation.id
         mode = retry_source.run.mode
+        tier_preference = retry_source.run.route_tier_preference
         conv = retry_source.conversation
         user_msg = retry_source.user_message
         chat_history = conversation_memory.get_context_before(
@@ -109,6 +110,9 @@ async def chat_query(
         mode = body.get("mode", "auto")
         if mode not in {"auto", "local", "web"}:
             return _stream_error("mode 必须是 auto、local 或 web")
+        tier_preference = body.get("agent_tier", "auto")
+        if tier_preference not in {"auto", "fast", "standard", "expert"}:
+            return _stream_error("agent_tier 必须是 auto、fast、standard 或 expert")
 
         # ── 创建或获取对话 ──────────────────────────────────
         if conversation_id:
@@ -163,6 +167,7 @@ async def chat_query(
         chat_history,
         mode,
         user_msg.id,
+        tier_preference=tier_preference,
         retry_of_run_id=retry_run_id,
     )
 
@@ -177,6 +182,7 @@ async def _agent_event_generator(
     chat_history: list[dict[str, str]],
     mode: str,
     user_message_id: str,
+    tier_preference: str = "auto",
     retry_of_run_id: str | None = None,
 ):
     """
@@ -202,6 +208,7 @@ async def _agent_event_generator(
         question,
         mode=mode,
         history=chat_history,
+        tier_preference=tier_preference,
     )
     agent_registry = build_default_agent_registry()
     agent_profile = agent_registry.for_decision(route_decision)
@@ -212,6 +219,7 @@ async def _agent_event_generator(
         user_message_id=user_message_id,
         retry_of_run_id=retry_of_run_id,
         mode=mode,
+        route_tier_preference=tier_preference,
         agent_profile=agent_profile.name,
         route_tier=route_decision.tier,
         route_name=route_decision.route,
@@ -230,7 +238,7 @@ async def _agent_event_generator(
     root_goal, initial_goal_events = goal_runtime.create_root(
         title=question,
         agent_profile=agent_profile.name,
-        input_data={"question": question, "mode": mode},
+        input_data={"question": question, "mode": mode, "agent_tier": tier_preference},
         tool_call_budget=0,
     )
     agent_goal, agent_goal_events = goal_runtime.create_child(

@@ -12,6 +12,7 @@ from typing import Literal
 
 
 AgentTier = Literal["fast", "standard", "expert"]
+AgentTierPreference = Literal["auto", "fast", "standard", "expert"]
 ChatMode = Literal["auto", "local", "web"]
 
 
@@ -43,6 +44,7 @@ class RouteDecision:
     requires_decomposition: bool = False
     max_children: int = 0
     max_depth: int = 0
+    tier_preference: AgentTierPreference = "auto"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -53,6 +55,7 @@ class RouteDecision:
             "requires_decomposition": self.requires_decomposition,
             "max_children": self.max_children,
             "max_depth": self.max_depth,
+            "tier_preference": self.tier_preference,
         }
 
 
@@ -128,7 +131,17 @@ class ComplexityRouter:
         *,
         mode: ChatMode = "auto",
         history: list[dict[str, str]] | None = None,
+        tier_preference: AgentTierPreference = "auto",
     ) -> RouteDecision:
+        if tier_preference not in {"auto", "fast", "standard", "expert"}:
+            raise ValueError("tier_preference must be auto, fast, standard, or expert")
+        if tier_preference != "auto":
+            return self._decision_for_tier(
+                tier_preference,
+                reason="manual_tier_override",
+                tier_preference=tier_preference,
+            )
+
         normalized = (question or "").strip().lower()
         if not normalized:
             return RouteDecision("fast", "direct", 0, ("empty_request",))
@@ -166,30 +179,39 @@ class ComplexityRouter:
             score = 2
             reasons.append("tool_access_required")
 
-        if score >= 4:
-            tier: AgentTier = "expert"
-            route = "supervisor"
-            requires_decomposition = True
-            max_children, max_depth = 4, 2
-        elif score >= 2:
-            tier = "standard"
-            route = "tool_agent"
-            requires_decomposition = False
-            max_children, max_depth = 1, 1
-        else:
-            tier = "fast"
-            route = "direct"
-            requires_decomposition = False
-            max_children, max_depth = 0, 0
+        tier: AgentTier = "expert" if score >= 4 else "standard" if score >= 2 else "fast"
+        decision = self._decision_for_tier(tier)
+        return RouteDecision(
+            tier=decision.tier,
+            route=decision.route,
+            score=score,
+            reasons=tuple(reasons),
+            requires_decomposition=decision.requires_decomposition,
+            max_children=decision.max_children,
+            max_depth=decision.max_depth,
+        )
 
+    @staticmethod
+    def _decision_for_tier(
+        tier: AgentTier,
+        *,
+        reason: str | None = None,
+        tier_preference: AgentTierPreference = "auto",
+    ) -> RouteDecision:
+        route, score, decomposition, max_children, max_depth = {
+            "fast": ("direct", 0, False, 0, 0),
+            "standard": ("tool_agent", 2, False, 1, 1),
+            "expert": ("supervisor", 4, True, 4, 2),
+        }[tier]
         return RouteDecision(
             tier=tier,
             route=route,
             score=score,
-            reasons=tuple(reasons),
-            requires_decomposition=requires_decomposition,
+            reasons=(reason,) if reason else (),
+            requires_decomposition=decomposition,
             max_children=max_children,
             max_depth=max_depth,
+            tier_preference=tier_preference,
         )
 
 
