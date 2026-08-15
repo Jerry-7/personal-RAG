@@ -110,6 +110,8 @@ export interface RouteSelection {
   requires_decomposition: boolean;
   max_children: number;
   max_depth: number;
+  observed_max_children?: number;
+  observed_max_depth?: number;
   tier_preference: AgentTierPreference;
 }
 
@@ -154,6 +156,10 @@ export interface RunMetrics {
   goals_completed: number;
   goals_failed: number;
   goals_cancelled: number;
+  goals_pending: number;
+  goals_running: number;
+  goal_retry_attempts: number;
+  progress_percent: number;
   tool_calls_used: number;
   tool_calls_failed: number;
   tool_duration_ms: number;

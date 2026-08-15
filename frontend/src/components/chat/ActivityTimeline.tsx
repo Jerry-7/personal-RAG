@@ -79,6 +79,45 @@ function formatDuration(durationMs: number | null): string {
   return `${Math.floor(durationMs / 60000)}m ${Math.round((durationMs % 60000) / 1000)}s`;
 }
 
+function getAgentTreeShape(goals: GoalNodeData[]): { maxChildren: number; maxDepth: number } {
+  const primary = goals
+    .filter((goal) => goal.kind === 'agent')
+    .sort((left, right) => left.sequence - right.sequence)[0];
+  if (!primary) return { maxChildren: 0, maxDepth: 0 };
+
+  const parents = new Map(goals.map((goal) => [goal.id, goal.parent_id]));
+  const descendants: GoalNodeData[] = [];
+  let maxDepth = 0;
+  for (const goal of goals) {
+    if (goal.id === primary.id) continue;
+    let parentId = goal.parent_id;
+    let depth = 0;
+    const visited = new Set([goal.id]);
+    while (parentId && !visited.has(parentId)) {
+      visited.add(parentId);
+      depth += 1;
+      if (parentId === primary.id) {
+        descendants.push(goal);
+        maxDepth = Math.max(maxDepth, depth);
+        break;
+      }
+      parentId = parents.get(parentId) || null;
+    }
+  }
+
+  const descendantIds = new Set(descendants.map((goal) => goal.id));
+  const childCounts = new Map<string, number>();
+  for (const goal of descendants) {
+    if (goal.parent_id === primary.id || (goal.parent_id && descendantIds.has(goal.parent_id))) {
+      childCounts.set(goal.parent_id, (childCounts.get(goal.parent_id) || 0) + 1);
+    }
+  }
+  return {
+    maxChildren: Math.max(0, ...childCounts.values()),
+    maxDepth,
+  };
+}
+
 function StatusIcon({ status }: { status: GoalNodeData['status'] | AgentStep['status'] }) {
   if (status === 'running') return <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-600" />;
   if (status === 'failed' || status === 'cancelled') return <XCircle className="h-3.5 w-3.5 shrink-0 text-red-500" />;
@@ -243,6 +282,19 @@ export function ActivityTimeline() {
         ?? roots.some((goal) => goal.status === 'failed' || goal.status === 'cancelled'))
   );
   const activityCount = steps.length + goalNodes.length + (routeSelection ? 1 : 0);
+  const terminalGoalCount = goalNodes.filter((goal) =>
+    goal.status === 'completed' || goal.status === 'failed' || goal.status === 'cancelled'
+  ).length;
+  const goalProgress = goalNodes.length
+    ? Math.round(terminalGoalCount * 100 / goalNodes.length)
+    : runSnapshot?.metrics.progress_percent ?? 0;
+  const retryAttempts = goalNodes.reduce(
+    (total, goal) => total + Math.max(0, goal.attempt - 1),
+    0,
+  );
+  const liveTreeShape = getAgentTreeShape(goalNodes);
+  const observedMaxChildren = routeSelection?.observed_max_children ?? liveTreeShape.maxChildren;
+  const observedMaxDepth = routeSelection?.observed_max_depth ?? liveTreeShape.maxDepth;
   const togglePaused = async () => {
     if (controlPending) return;
     setControlPending(true);
@@ -354,6 +406,28 @@ export function ActivityTimeline() {
               {runSnapshot.error_message}
             </p>
           )}
+          {!!goalNodes.length && (
+            <div className="flex min-h-5 items-center gap-2 text-[10px] text-gray-400">
+              <Target className="h-3.5 w-3.5 shrink-0" />
+              <div
+                className="h-1.5 min-w-16 flex-1 overflow-hidden rounded-sm bg-gray-200 dark:bg-gray-700"
+                role="progressbar"
+                aria-label="目标执行进度"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={goalProgress}
+              >
+                <div
+                  className={`h-full transition-[width] ${goalProgress === 100 ? 'bg-green-600' : 'bg-blue-600'}`}
+                  style={{ width: `${goalProgress}%` }}
+                />
+              </div>
+              <span className="shrink-0 tabular-nums">
+                {terminalGoalCount}/{goalNodes.length} · {goalProgress}%
+              </span>
+              {retryAttempts > 0 && <span className="shrink-0">重试 {retryAttempts}</span>}
+            </div>
+          )}
           {routeSelection && (
             <div className="text-xs text-gray-600 dark:text-gray-400">
               <div className="flex min-h-7 items-center gap-2">
@@ -374,11 +448,14 @@ export function ActivityTimeline() {
                 )}
                 <Check className="h-3.5 w-3.5 shrink-0 text-green-600" />
               </div>
-              {!!routeSelection.reasons.length && (
-                <p className="ml-5 text-[10px] text-gray-400">
-                  {routeSelection.reasons.map((reason) => reasonLabels[reason] || reason).join(' · ')}
-                </p>
-              )}
+              <div className="ml-5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-gray-400">
+                {!!routeSelection.reasons.length && (
+                  <span>{routeSelection.reasons.map((reason) => reasonLabels[reason] || reason).join(' · ')}</span>
+                )}
+                <span className="tabular-nums">
+                  层级 {observedMaxDepth}/{routeSelection.max_depth} · 分支 {observedMaxChildren}/{routeSelection.max_children}
+                </span>
+              </div>
             </div>
           )}
 
