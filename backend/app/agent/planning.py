@@ -10,6 +10,11 @@ from typing import Any
 
 from app.config import settings
 from app.providers.base import LLMProvider
+from app.services.context_compression import (
+    CompressionStats,
+    ContextCompressionError,
+    ContextCompressor,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +56,7 @@ class WorkerSpec:
 class WorkerPlan:
     workers: tuple[WorkerSpec, ...]
     source: str
+    compression_stats: CompressionStats | None = None
 
 
 class SupervisorPlanner:
@@ -94,13 +100,24 @@ class SupervisorPlanner:
             f"Worker limit: {max_workers}\n"
             f"Allowed roles: {', '.join(allowed_roles)}\n\n"
             f"Conversation context:\n{history or '(none)'}\n\n"
-            f"Original request:\n{question[:12000]}"
+            f"Original request:\n{question}"
         )
+        compression_stats = None
         try:
+            compressed_request = await ContextCompressor(
+                self.provider,
+                model_name=self.model_name,
+            ).compress_text(
+                request,
+                target_tokens=settings.agent_input_max_tokens,
+                purpose="multi-Agent worker planning",
+            )
+            if compressed_request.stats.compressed:
+                compression_stats = compressed_request.stats
             response = await chat(
                 messages=[
                     {"role": "system", "content": PLANNER_PROMPT},
-                    {"role": "user", "content": request},
+                    {"role": "user", "content": compressed_request.content},
                 ],
                 model=self.model_name,
                 temperature=0.0,
@@ -113,12 +130,17 @@ class SupervisorPlanner:
                 max_workers=max_workers,
             )
             if workers:
-                return WorkerPlan(tuple(workers), "model")
+                return WorkerPlan(tuple(workers), "model", compression_stats)
         except (TypeError, ValueError, json.JSONDecodeError):
             logger.info("Supervisor plan was invalid; using bounded fallback")
+        except ContextCompressionError:
+            logger.warning(
+                "Supervisor planning compression failed; using bounded fallback",
+                exc_info=True,
+            )
         except Exception:
             logger.warning("Supervisor planning failed; using bounded fallback", exc_info=True)
-        return WorkerPlan(tuple(fallback), "fallback")
+        return WorkerPlan(tuple(fallback), "fallback", compression_stats)
 
     @staticmethod
     def _normalize_plan(
@@ -137,11 +159,11 @@ class SupervisorPlanner:
             role = str(item.get("role", "")).strip()
             if role not in allowed_roles:
                 continue
-            title = re.sub(r"\s+", " ", str(item.get("title", ""))).strip()[:80]
+            title = re.sub(r"\s+", " ", str(item.get("title", ""))).strip()
             instruction = re.sub(
                 r"\s+", " ", str(item.get("instruction", ""))
-            ).strip()[:800]
-            if not title or not instruction:
+            ).strip()
+            if not title or not instruction or len(title) > 80 or len(instruction) > 800:
                 continue
             key = (role, title.casefold(), instruction.casefold())
             if key in seen:
@@ -160,12 +182,12 @@ class SupervisorPlanner:
     @staticmethod
     def _planner_history(history: list[dict[str, str]]) -> str:
         parts: list[str] = []
-        for message in history[-6:]:
+        for message in history:
             role = str(message.get("role", "message")).upper()
             content = str(message.get("content", "")).strip()
             if content:
                 parts.append(f"<{role}>\n{content}\n</{role}>")
-        return "\n".join(parts)[-6000:]
+        return "\n".join(parts)
 
     @staticmethod
     def _parse_json_object(content: str) -> dict[str, Any]:

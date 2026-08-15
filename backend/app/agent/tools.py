@@ -29,10 +29,6 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# 工具执行返回值的最大字符数（超出截断）
-MAX_TOOL_RESULT_LENGTH = 30000
-
-
 class ToolDef:
     """
     单个工具的定义。
@@ -185,11 +181,7 @@ class ToolRegistry:
             if "context" in inspect.signature(tool.handler).parameters:
                 call_arguments["context"] = context
             result = await tool.handler(**call_arguments)
-            result_str = str(result)
-            # 截断过长结果，避免撑爆 context
-            if len(result_str) > MAX_TOOL_RESULT_LENGTH:
-                result_str = result_str[:MAX_TOOL_RESULT_LENGTH] + "...(截断)"
-            return result_str
+            return str(result)
         except Exception as e:
             logger.exception("Tool execution failed: %s", name)
             return f"工具执行失败: {str(e)}"

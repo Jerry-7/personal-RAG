@@ -190,6 +190,27 @@ class GoalRuntime:
         self.db.commit()
         return event
 
+    def record_runtime_event(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+        *,
+        node_id: str | None = None,
+    ) -> RunEvent:
+        """Persist non-lifecycle Agent telemetry in the ordered run event stream."""
+        self._sequence += 1
+        event = RunEvent(
+            run_id=self.run_id,
+            node_id=node_id,
+            sequence=self._sequence,
+            event_type=event_type,
+            payload_json=json.dumps(payload, ensure_ascii=False),
+            created_at=datetime.now(timezone.utc),
+        )
+        self.db.add(event)
+        self.db.commit()
+        return event
+
     def _record(
         self,
         event_type: str,

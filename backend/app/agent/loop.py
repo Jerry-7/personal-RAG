@@ -28,6 +28,11 @@ from app.agent.tools import tool_registry
 from app.config import settings
 from app.db.models import ToolExecution
 from app.providers.base import AgentResponse, LLMProvider, normalize_system_messages
+from app.services.context_compression import (
+    ContextCompressionError,
+    ContextCompressor,
+    estimate_tokens,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +117,7 @@ class AgentLoop:
         tools: Optional[Any] = None,
         input_processor: AgentInputProcessor | None = None,
         model_name: str | None = None,
+        context_compressor: ContextCompressor | None = None,
     ) -> None:
         """
         初始化 Agent 循环。
@@ -126,6 +132,10 @@ class AgentLoop:
         self.tools = tools or tool_registry
         self.input_processor = input_processor or AgentInputProcessor()
         self.model_name = model_name
+        self.context_compressor = context_compressor or ContextCompressor(
+            provider,
+            model_name=model_name,
+        )
 
     async def run(
         self,
@@ -159,6 +169,15 @@ class AgentLoop:
         input_plan = await self.input_processor.optimize(
             self.provider, question, chat_history
         )
+        if input_plan.compression_stats is not None:
+            yield {
+                "event": "context_compressed",
+                "data": {
+                    "scope": "input_rewrite",
+                    "node_id": context.goal_node_id if context else None,
+                    **input_plan.compression_stats.to_dict(),
+                },
+            }
         mode = context.mode if context else "auto"
         mode_policies = {
             "local": "Network access is disabled. Use only local sources and conversation context.",
@@ -180,10 +199,9 @@ class AgentLoop:
             {"role": "system", "content": system_prompt},
         ]
 
-        # 添加历史对话（最近 3 轮）
+        # Add the complete history; the compression Agent handles the context budget.
         if chat_history:
             messages = normalize_system_messages([*messages, *chat_history])
-            messages = [messages[0], *messages[1:][-6:]]
 
         messages.append({"role": "user", "content": input_plan.to_agent_message()})
 
@@ -236,12 +254,37 @@ class AgentLoop:
                 break
 
             try:
+                prepared = await self.context_compressor.compress_messages(
+                    messages,
+                    purpose="ReAct decision context",
+                )
+                messages = prepared.messages
+                if prepared.stats.compressed:
+                    yield {
+                        "event": "context_compressed",
+                        "data": {
+                            "scope": "agent_messages",
+                            "node_id": context.goal_node_id if context else None,
+                            **prepared.stats.to_dict(),
+                        },
+                    }
                 response: AgentResponse = await self.provider.chat_with_tools(
                     messages=messages,
                     tools=tools_schema,
                     model=self.model_name,
                     max_tokens=4096,
                 )
+            except ContextCompressionError as e:
+                logger.error("Agent context compression failed: %s", e)
+                yield {
+                    "event": "context_compression_failed",
+                    "data": {
+                        "scope": "agent_messages",
+                        "node_id": context.goal_node_id if context else None,
+                        "message": str(e),
+                    },
+                }
+                return
             except Exception as e:
                 logger.exception("LLM call failed at iteration %d", iteration)
                 yield {"event": "error",
@@ -385,6 +428,32 @@ class AgentLoop:
 
         parser = CitationParser()
         emitted_content = False
+        try:
+            prepared = await self.context_compressor.compress_messages(
+                messages,
+                purpose="forced final answer context",
+            )
+        except ContextCompressionError as exc:
+            logger.error("Final answer context compression failed: %s", exc)
+            yield {
+                "event": "context_compression_failed",
+                "data": {
+                    "scope": "agent_messages",
+                    "node_id": context.goal_node_id if context else None,
+                    "message": str(exc),
+                },
+            }
+            return
+        messages = prepared.messages
+        if prepared.stats.compressed:
+            yield {
+                "event": "context_compressed",
+                "data": {
+                    "scope": "agent_messages",
+                    "node_id": context.goal_node_id if context else None,
+                    **prepared.stats.to_dict(),
+                },
+            }
         async for token in self.provider.chat_stream(
             messages=messages,
             model=self.model_name,
@@ -485,10 +554,33 @@ class AgentLoop:
         duration_ms = round((time.perf_counter() - started) * 1000)
         failed = result.startswith(("工具执行失败:", "Tool execution failed:"))
 
+        target_tokens = settings.agent_tool_result_max_tokens
         if context:
             remaining = max(0, context.max_tool_output_chars - context.tool_output_chars)
-            if len(result) > remaining:
-                result = result[:remaining] + "...(本次研究的工具输出预算已用尽)"
+            target_tokens = min(target_tokens, max(128, remaining // 4))
+        if not failed and estimate_tokens(result) > target_tokens:
+            try:
+                compressed = await self.context_compressor.compress_text(
+                    result,
+                    target_tokens=target_tokens,
+                    purpose=f"tool result from {name}",
+                )
+                result = compressed.content
+                yield {
+                    "event": "context_compressed",
+                    "data": {
+                        "scope": "tool_result",
+                        "node_id": context.goal_node_id if context else None,
+                        "tool_name": name,
+                        **compressed.stats.to_dict(),
+                    },
+                }
+            except ContextCompressionError as exc:
+                logger.error("Tool result compression failed for %s: %s", name, exc)
+                result = f"Tool execution failed: output compression failed: {exc}"
+                failed = True
+
+        if context:
             context.tool_output_chars += len(result)
 
         if execution:

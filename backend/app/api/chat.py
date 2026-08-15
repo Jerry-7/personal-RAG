@@ -24,6 +24,7 @@ from app.config import settings
 from app.db.database import get_db
 from app.db.models import AgentRun, Conversation, Message
 from app.services.conversation_memory import conversation_memory
+from app.services.context_compression import ContextCompressionError
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -394,6 +395,15 @@ async def _agent_event_generator(
                            data.get("name", "?"),
                            len(data.get("result", "")))
 
+            elif evt_type in {"context_compressed", "context_compression_failed"}:
+                payload = data if isinstance(data, dict) else {"message": str(data)}
+                runtime_event = goal_runtime.record_runtime_event(
+                    evt_type,
+                    payload,
+                    node_id=str(payload.get("node_id") or "") or None,
+                )
+                data = serialize_event(runtime_event)
+
             elif evt_type == "error":
                 # 错误事件直接转发
                 run_error_message = str(data.get("message", "Agent 执行失败")) if isinstance(data, dict) else str(data)
@@ -444,7 +454,44 @@ async def _agent_event_generator(
             agent_run.web_pages_used = run_context.web_pages_used
             agent_run.completed_at = datetime.now(timezone.utc)
             db.commit()
-            conversation_memory.update_summary(db, conversation_id)
+            try:
+                summary_update = await conversation_memory.update_summary(
+                    db,
+                    conversation_id,
+                    llm_provider,
+                    model_name=model_selection.model,
+                )
+                if summary_update and summary_update.stats.compressed:
+                    payload = {
+                        "scope": "conversation_memory",
+                        "node_id": agent_goal.id,
+                        **summary_update.stats.to_dict(),
+                    }
+                    runtime_event = goal_runtime.record_runtime_event(
+                        "context_compressed",
+                        payload,
+                        node_id=agent_goal.id,
+                    )
+                    yield {
+                        "event": "context_compressed",
+                        "data": json.dumps(serialize_event(runtime_event)),
+                    }
+            except ContextCompressionError as exc:
+                logger.exception("Conversation memory compression failed")
+                payload = {
+                    "scope": "conversation_memory",
+                    "node_id": agent_goal.id,
+                    "message": str(exc),
+                }
+                runtime_event = goal_runtime.record_runtime_event(
+                    "context_compression_failed",
+                    payload,
+                    node_id=agent_goal.id,
+                )
+                yield {
+                    "event": "context_compression_failed",
+                    "data": json.dumps(serialize_event(runtime_event), ensure_ascii=False),
+                }
             goal_events = [
                 goal_runtime.transition(
                     agent_goal,

@@ -1,9 +1,23 @@
-"""Bounded conversation context with a persisted rolling summary."""
+"""Conversation context with a persisted Agent-compressed rolling summary."""
+
+from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db.models import ConversationSummary, Message
+from app.providers.base import LLMProvider
+from app.services.context_compression import (
+    CompressionStats,
+    ContextCompressor,
+    estimate_tokens,
+)
+
+
+@dataclass(frozen=True)
+class ConversationSummaryUpdate:
+    summary: ConversationSummary
+    stats: CompressionStats
 
 
 class ConversationMemoryService:
@@ -58,36 +72,54 @@ class ConversationMemoryService:
                 messages = messages[ids.index(summary.through_message_id) + 1:]
         context.extend(
             {"role": message.role, "content": message.content}
-            for message in messages[-self.recent_message_count:]
+            for message in messages
         )
         return context
 
-    def update_summary(self, db: Session, conversation_id: str) -> ConversationSummary | None:
+    async def update_summary(
+        self,
+        db: Session,
+        conversation_id: str,
+        provider: LLMProvider,
+        *,
+        model_name: str | None = None,
+    ) -> ConversationSummaryUpdate | None:
         messages = (
             db.query(Message).filter(Message.conversation_id == conversation_id)
             .order_by(Message.created_at.asc()).all()
         )
-        total_chars = sum(len(message.content) for message in messages)
-        if len(messages) <= 12 and total_chars <= settings.agent_context_max_chars:
+        total_tokens = sum(estimate_tokens(message.content) for message in messages)
+        if len(messages) <= 12 and total_tokens <= settings.agent_context_max_tokens:
             return None
         old_messages = messages[:-self.recent_message_count]
         if not old_messages:
             return None
-        lines = []
-        for message in old_messages:
-            label = "User" if message.role == "user" else "Assistant"
-            compact = " ".join(message.content.split())
-            lines.append(f"{label}: {compact[:800]}")
-        summary_text = "\n".join(lines)[-12000:]
+        source = "\n\n".join(
+            (
+                f"<message id={message.id!r} role={message.role!r}>\n"
+                f"{message.content}\n"
+                "</message>"
+            )
+            for message in old_messages
+        )
+        compressed = await ContextCompressor(
+            provider,
+            model_name=model_name,
+        ).compress_text(
+            source,
+            target_tokens=settings.agent_memory_summary_max_tokens,
+            purpose="persisted conversation memory",
+        )
         summary = db.query(ConversationSummary).filter_by(conversation_id=conversation_id).first()
         if summary is None:
             summary = ConversationSummary(conversation_id=conversation_id)
             db.add(summary)
-        summary.summary = summary_text
+        summary.summary = compressed.content
         summary.through_message_id = old_messages[-1].id
         summary.message_count = len(old_messages)
         db.commit()
-        return summary
+        db.refresh(summary)
+        return ConversationSummaryUpdate(summary, compressed.stats)
 
 
 conversation_memory = ConversationMemoryService()

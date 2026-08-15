@@ -100,6 +100,15 @@ class Supervisor:
             )
             plan = worker_plan.workers
             planning_source = worker_plan.source
+            if worker_plan.compression_stats is not None:
+                yield {
+                    "event": "context_compressed",
+                    "data": {
+                        "scope": "supervisor_planning",
+                        "node_id": self.parent_goal.id,
+                        **worker_plan.compression_stats.to_dict(),
+                    },
+                }
             if self.context.is_cancelled():
                 return
             worker_entries: list[tuple[WorkerSpec, AgentProfile, GoalNode]] = []
@@ -182,7 +191,7 @@ class Supervisor:
                             result.goal,
                             "failed",
                             output={
-                                "report": result.report[:12000],
+                                "report": result.report,
                                 "attempts": result.attempts,
                             },
                             error_message=result.error_message,
@@ -192,7 +201,7 @@ class Supervisor:
                             result.goal,
                             "completed",
                             output={
-                                "report": result.report[:12000],
+                                "report": result.report,
                                 "attempts": result.attempts,
                             },
                         )
@@ -207,7 +216,7 @@ class Supervisor:
                 result = results_by_index[index]
                 citation_map = self._merge_worker_state(result)
                 report = self._remap_citations(result.report, citation_map)
-                reports.append((result.spec, report[:12000], result.error_message))
+                reports.append((result.spec, report, result.error_message))
 
             if self.context.is_cancelled():
                 return

@@ -71,8 +71,15 @@ class Settings(BaseSettings):
 
     # ── Agent 配置 ────────────────────────────────────────────
     agent_max_iterations: int = 5
-    agent_context_max_chars: int = 24000
+    agent_context_max_tokens: int = 12000
+    agent_compression_chunk_tokens: int = 3000
+    agent_compression_max_rounds: int = 4
+    agent_memory_summary_max_tokens: int = 3500
+    agent_tool_result_max_tokens: int = 3000
     agent_input_rewrite_enabled: bool = True
+    agent_input_max_tokens: int = 6000
+    # Compatibility for older input processors; token budgets are authoritative.
+    agent_context_max_chars: int = 24000
     agent_input_max_chars: int = 12000
     agent_input_history_max_chars: int = 12000
     agent_dynamic_planning_enabled: bool = True

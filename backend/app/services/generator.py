@@ -14,6 +14,7 @@ from app.config import settings
 from app.providers.base import LLMProvider, normalize_system_messages
 from app.providers.ollama import OllamaLLMProvider
 from app.services.citation import CitationParser
+from app.services.context_compression import ContextCompressor
 
 
 # ── RAG Prompt 模板 ──────────────────────────────────────────────
@@ -148,15 +149,19 @@ class Generator:
         # Step 2: 构建 messages
         messages = [{"role": "system", "content": RAG_SYSTEM_PROMPT.format(context=context)}]
 
-        # 添加历史对话（最近几轮）
+        # Add complete history; context is compressed before the provider call.
         if chat_history:
             messages = normalize_system_messages([*messages, *chat_history])
-            messages = [messages[0], *messages[1:][-6:]]  # 最多保留最近 3 轮
 
         messages.append({"role": "user", "content": RAG_USER_PROMPT.format(question=question)})
 
         # Step 3: 流式生成 + 引用解析
         provider = await self._get_provider()
+        prepared = await ContextCompressor(provider).compress_messages(
+            messages,
+            purpose="retrieval-augmented generation context",
+        )
+        messages = prepared.messages
         parser = CitationParser()
 
         async for token in provider.chat_stream(messages=messages):

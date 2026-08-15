@@ -51,6 +51,29 @@ class GoalRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             runtime.transition(goal, "running")
 
+    def test_runtime_telemetry_shares_the_ordered_event_stream(self):
+        runtime = GoalRuntime(self.db, "run-telemetry")
+        goal, _ = runtime.create_root(
+            title="压缩上下文",
+            agent_profile="standard_research",
+            input_data={},
+        )
+
+        event = runtime.record_runtime_event(
+            "context_compressed",
+            {
+                "scope": "agent_messages",
+                "original_tokens": 8000,
+                "compressed_tokens": 2000,
+            },
+            node_id=goal.id,
+        )
+
+        serialized = serialize_event(event)
+        self.assertEqual(serialized["sequence"], 3)
+        self.assertEqual(serialized["node_id"], goal.id)
+        self.assertEqual(serialized["payload"]["compressed_tokens"], 2000)
+
     def test_child_goal_is_ordered_under_root(self):
         runtime = GoalRuntime(self.db, "run-3")
         root, _ = runtime.create_root(
