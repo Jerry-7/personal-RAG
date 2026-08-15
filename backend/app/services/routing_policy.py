@@ -79,6 +79,7 @@ def create_routing_policy(
     note: str | None = None,
     source: str = "manual",
     based_on_version: int | None = None,
+    commit: bool = True,
 ) -> RoutingPolicyVersion:
     RoutingPolicy(
         standard_min_score=standard_min_score,
@@ -109,14 +110,17 @@ def create_routing_policy(
     )
     db.add(row)
     try:
-        db.commit()
+        db.flush()
+        if commit:
+            db.commit()
     except IntegrityError as exc:
         db.rollback()
         current = get_active_routing_policy(db)
         raise RoutingPolicyConflict(
             f"routing policy changed concurrently; active version is {current.version}"
         ) from exc
-    db.refresh(row)
+    if commit:
+        db.refresh(row)
     return row
 
 
@@ -126,6 +130,7 @@ def rollback_routing_policy(
     target_version: int,
     expected_active_version: int,
     note: str | None = None,
+    commit: bool = True,
 ) -> RoutingPolicyVersion:
     if target_version == 0:
         target = DEFAULT_ROUTING_POLICY
@@ -141,4 +146,5 @@ def rollback_routing_policy(
         note=note,
         source="rollback",
         based_on_version=target_version,
+        commit=commit,
     )

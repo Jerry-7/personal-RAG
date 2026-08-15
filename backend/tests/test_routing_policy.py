@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.agent.routing import ComplexityRouter, RoutingPolicy
 from app.db.database import Base
+from app.db.models import RoutingPolicyConclusion, RoutingPolicyVersion
 from app.schemas.routing_policy import RoutingPolicySimulation
 from app.services.routing_policy import (
     RoutingPolicyConflict,
@@ -18,6 +19,10 @@ from app.services.routing_policy import (
     get_active_routing_policy,
     list_routing_policies,
     rollback_routing_policy,
+)
+from app.services.routing_policy_conclusion import (
+    RoutingPolicyConclusionConflict,
+    conclude_routing_policy_experiment,
 )
 from app.services.routing_policy_evaluation import (
     build_policy_experiment,
@@ -221,6 +226,132 @@ class RoutingPolicyTests(unittest.TestCase):
         self.assertEqual(low_quality["recommendation"], "rollback")
         self.assertIn("quality_regression", low_quality["reason_codes"])
 
+    def test_experiment_cannot_be_concluded_before_it_is_ready(self):
+        policy = create_routing_policy(
+            self.db,
+            standard_min_score=3,
+            expert_min_score=5,
+            expected_active_version=0,
+        )
+
+        with self.assertRaisesRegex(RoutingPolicyConclusionConflict, "not ready"):
+            conclude_routing_policy_experiment(
+                self.db,
+                policy_version=policy.version,
+                expected_active_version=policy.version,
+                decision="keep",
+                experiment={
+                    "current_policy_version": policy.version,
+                    "baseline_policy_version": 0,
+                    "status": "collecting",
+                    "recommendation": "collect_runs",
+                },
+            )
+
+        self.assertEqual(self.db.query(RoutingPolicyConclusion).count(), 0)
+
+    def test_keep_conclusion_preserves_policy_and_evidence(self):
+        policy = create_routing_policy(
+            self.db,
+            standard_min_score=3,
+            expert_min_score=5,
+            expected_active_version=0,
+        )
+        experiment = {
+            "current_policy_version": policy.version,
+            "baseline_policy_version": 0,
+            "status": "ready",
+            "recommendation": "keep",
+            "reason_codes": ["stable"],
+        }
+
+        conclusion, resulting_policy = conclude_routing_policy_experiment(
+            self.db,
+            policy_version=policy.version,
+            expected_active_version=policy.version,
+            decision="keep",
+            experiment=experiment,
+        )
+
+        self.assertIsNone(resulting_policy)
+        self.assertEqual(conclusion.policy_version, policy.version)
+        self.assertIn('\"reason_codes\": [\"stable\"]', conclusion.evidence_json)
+        self.assertEqual(get_active_routing_policy(self.db).version, policy.version)
+        with self.assertRaisesRegex(RoutingPolicyConclusionConflict, "already"):
+            conclude_routing_policy_experiment(
+                self.db,
+                policy_version=policy.version,
+                expected_active_version=policy.version,
+                decision="keep",
+                experiment=experiment,
+            )
+
+    def test_alert_conclusion_rolls_back_and_records_one_transaction(self):
+        policy = create_routing_policy(
+            self.db,
+            standard_min_score=3,
+            expert_min_score=5,
+            expected_active_version=0,
+        )
+
+        conclusion, rollback = conclude_routing_policy_experiment(
+            self.db,
+            policy_version=policy.version,
+            expected_active_version=policy.version,
+            decision="rollback",
+            experiment={
+                "current_policy_version": policy.version,
+                "baseline_policy_version": 0,
+                "status": "operational_alert",
+                "recommendation": "rollback",
+                "reason_codes": ["success_rate_regression"],
+            },
+        )
+
+        self.assertIsNotNone(rollback)
+        assert rollback is not None
+        self.assertEqual(rollback.version, 2)
+        self.assertEqual(rollback.source, "rollback")
+        self.assertEqual(rollback.based_on_version, 0)
+        self.assertEqual(conclusion.resulting_policy_version, rollback.version)
+        self.assertEqual(get_active_routing_policy(self.db).version, rollback.version)
+        original = self.db.get(RoutingPolicyVersion, policy.version)
+        assert original is not None
+        self.assertFalse(original.is_active)
+
+    def test_guarded_recommendation_override_requires_note(self):
+        policy = create_routing_policy(
+            self.db,
+            standard_min_score=3,
+            expert_min_score=5,
+            expected_active_version=0,
+        )
+        experiment = {
+            "current_policy_version": policy.version,
+            "baseline_policy_version": 0,
+            "status": "ready",
+            "recommendation": "rollback",
+        }
+
+        with self.assertRaisesRegex(RoutingPolicyConclusionConflict, "note"):
+            conclude_routing_policy_experiment(
+                self.db,
+                policy_version=policy.version,
+                expected_active_version=policy.version,
+                decision="keep",
+                experiment=experiment,
+            )
+
+        conclusion, _ = conclude_routing_policy_experiment(
+            self.db,
+            policy_version=policy.version,
+            expected_active_version=policy.version,
+            decision="keep",
+            experiment=experiment,
+            note="Reviewed the failed samples manually",
+        )
+        self.assertEqual(conclusion.note, "Reviewed the failed samples manually")
+
 
 class RoutingPolicyMigrationTests(unittest.TestCase):
     def test_migration_is_idempotent_and_backfills_legacy_runs(self):
@@ -253,4 +384,51 @@ class RoutingPolicyMigrationTests(unittest.TestCase):
             self.assertEqual(connection.execute(text(
                 "SELECT route_policy_version FROM agent_runs WHERE id = 'legacy-run'"
             )).scalar_one(), 0)
+        engine.dispose()
+
+    def test_conclusion_migration_is_idempotent(self):
+        engine = create_engine("sqlite:///:memory:")
+        migration_path = (
+            Path(__file__).parents[1]
+            / "alembic"
+            / "versions"
+            / "20260815_09_routing_policy_conclusions.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "routing_policy_conclusion_migration",
+            migration_path,
+        )
+        assert spec and spec.loader
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE routing_policy_versions (version INTEGER PRIMARY KEY)"
+            ))
+            connection.execute(text(
+                "INSERT INTO routing_policy_versions (version) VALUES (1)"
+            ))
+            migration.op = Operations(MigrationContext.configure(connection))
+            migration.upgrade()
+            migration.upgrade()
+
+            inspector = inspect(connection)
+            self.assertTrue(inspector.has_table("routing_policy_conclusions"))
+            self.assertEqual(
+                {
+                    "id",
+                    "policy_version",
+                    "baseline_version",
+                    "decision",
+                    "resulting_policy_version",
+                    "evidence_json",
+                    "note",
+                    "created_at",
+                },
+                {
+                    column["name"]
+                    for column in inspector.get_columns("routing_policy_conclusions")
+                },
+            )
         engine.dispose()

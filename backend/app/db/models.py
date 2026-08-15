@@ -325,6 +325,33 @@ class RoutingPolicyVersion(Base):
     )
 
 
+class RoutingPolicyConclusion(Base):
+    """Immutable human conclusion with the experiment evidence snapshot."""
+
+    __tablename__ = "routing_policy_conclusions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    policy_version: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("routing_policy_versions.version", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    baseline_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    resulting_policy_version: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("routing_policy_versions.version", ondelete="SET NULL"),
+        nullable=True,
+    )
+    evidence_json: Mapped[str] = mapped_column(Text, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, server_default=func.now()
+    )
+
+
 class GoalNode(Base):
     __tablename__ = "goal_nodes"
 

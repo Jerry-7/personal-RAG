@@ -9,6 +9,7 @@ from app.agent.routing import AgentTier, RoutingPolicy, classify_route_tier
 from app.db.models import AgentRun, AgentRunFeedback, GoalNode, ToolExecution
 from app.services.routing_analytics import TERMINAL_STATUSES, summarize_policy_versions
 from app.services.routing_policy import DEFAULT_ROUTING_POLICY, serialize_policy
+from app.services.routing_policy_conclusion import serialize_policy_conclusion
 
 
 _TIERS: tuple[AgentTier, ...] = ("fast", "standard", "expert")
@@ -248,6 +249,7 @@ def build_routing_policy_evaluation(
     *,
     current_policy: RoutingPolicy,
     policy_rows: Iterable[Any] = (),
+    conclusion_rows: Iterable[Any] = (),
     candidate_standard_min_score: int | None = None,
     candidate_expert_min_score: int | None = None,
 ) -> dict[str, Any]:
@@ -298,10 +300,21 @@ def build_routing_policy_evaluation(
         DEFAULT_ROUTING_POLICY if current_policy.version == 0 else current_policy,
     )
     current_policy_data = serialize_policy(current_policy_record)
+    conclusions = [serialize_policy_conclusion(row) for row in conclusion_rows]
+    experiment = build_policy_experiment(current_policy_data, observed)
+    experiment["conclusion"] = next(
+        (
+            item
+            for item in conclusions
+            if item["policy_version"] == current_policy.version
+        ),
+        None,
+    )
     return {
         "current_policy": current_policy_data,
         "observed_versions": observed,
-        "experiment": build_policy_experiment(current_policy_data, observed),
+        "experiment": experiment,
+        "conclusions": conclusions,
         "simulation": simulate_routing_policy(
             runs,
             standard_min_score=standard_min_score,

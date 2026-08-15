@@ -8,10 +8,12 @@ from app.db.models import (
     AgentRun,
     AgentRunFeedback,
     GoalNode,
+    RoutingPolicyConclusion,
     RoutingPolicyVersion,
     ToolExecution,
 )
 from app.schemas.routing_policy import (
+    RoutingPolicyConclusionCreate,
     RoutingPolicyCreate,
     RoutingPolicyRollback,
     RoutingPolicySimulation,
@@ -25,6 +27,11 @@ from app.services.routing_policy import (
     serialize_policy,
 )
 from app.services.routing_policy_evaluation import build_routing_policy_evaluation
+from app.services.routing_policy_conclusion import (
+    RoutingPolicyConclusionConflict,
+    conclude_routing_policy_experiment,
+    serialize_policy_conclusion,
+)
 
 
 router = APIRouter()
@@ -56,6 +63,32 @@ def _load_routing_evidence(db: Session, limit: int):
     return runs, goals, tools, feedback
 
 
+def _build_policy_evaluation(db: Session, limit: int):
+    runs, goals, tools, feedback = _load_routing_evidence(db, limit)
+    active = get_active_routing_policy(db)
+    policies = (
+        db.query(RoutingPolicyVersion)
+        .order_by(RoutingPolicyVersion.version.desc())
+        .limit(100)
+        .all()
+    )
+    conclusions = (
+        db.query(RoutingPolicyConclusion)
+        .order_by(RoutingPolicyConclusion.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    return build_routing_policy_evaluation(
+        runs,
+        goals,
+        tools,
+        feedback,
+        current_policy=active,
+        policy_rows=policies,
+        conclusion_rows=conclusions,
+    )
+
+
 @router.get("/routing-policies")
 async def get_routing_policies(
     limit: int = Query(50, ge=1, le=100),
@@ -69,22 +102,7 @@ async def get_routing_policy_evaluation(
     limit: int = Query(200, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
-    runs, goals, tools, feedback = _load_routing_evidence(db, limit)
-    active = get_active_routing_policy(db)
-    policies = (
-        db.query(RoutingPolicyVersion)
-        .order_by(RoutingPolicyVersion.version.desc())
-        .limit(100)
-        .all()
-    )
-    return build_routing_policy_evaluation(
-        runs,
-        goals,
-        tools,
-        feedback,
-        current_policy=active,
-        policy_rows=policies,
-    )
+    return _build_policy_evaluation(db, limit)
 
 
 @router.get("/routing-policies/simulation")
@@ -133,6 +151,36 @@ async def activate_routing_policy(
     except RoutingPolicyConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return serialize_policy(policy)
+
+
+@router.post("/routing-policies/{version}/conclude")
+async def conclude_routing_policy(
+    version: int,
+    payload: RoutingPolicyConclusionCreate,
+    db: Session = Depends(get_db),
+):
+    evaluation = _build_policy_evaluation(db, 500)
+    try:
+        conclusion, resulting_policy = conclude_routing_policy_experiment(
+            db,
+            policy_version=version,
+            decision=payload.decision,
+            expected_active_version=payload.expected_active_version,
+            experiment=evaluation["experiment"],
+            note=payload.note,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RoutingPolicyConclusionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "conclusion": serialize_policy_conclusion(conclusion),
+        "resulting_policy": (
+            serialize_policy(resulting_policy)
+            if resulting_policy is not None
+            else None
+        ),
+    }
 
 
 @router.post("/routing-policies/{version}/rollback", status_code=status.HTTP_201_CREATED)

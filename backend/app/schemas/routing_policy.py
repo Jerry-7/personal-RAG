@@ -1,5 +1,7 @@
 """Validation models for versioned complexity routing policy updates."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -30,3 +32,9 @@ class RoutingPolicySimulation(BaseModel):
         if self.standard_min_score >= self.expert_min_score:
             raise ValueError("standard_min_score must be lower than expert_min_score")
         return self
+
+
+class RoutingPolicyConclusionCreate(BaseModel):
+    decision: Literal["keep", "rollback"]
+    expected_active_version: int = Field(ge=1)
+    note: str | None = Field(default=None, max_length=512)
