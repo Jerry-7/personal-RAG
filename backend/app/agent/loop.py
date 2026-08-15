@@ -191,6 +191,7 @@ class AgentLoop:
 
         # Web mode has a deterministic minimum contract: at least one search.
         if context and context.mode == "web" and self.tools.get("web_search"):
+            await context.wait_if_paused()
             async for event in self._execute_tool(
                 "web_search", {"query": input_plan.primary_search_query}, 0, context
             ):
@@ -205,6 +206,9 @@ class AgentLoop:
         while iteration < self.max_iterations and not force_answer_reason:
             iteration += 1
             logger.debug("Agent iteration %d/%d", iteration, self.max_iterations)
+
+            if context:
+                await context.wait_if_paused()
 
             # 检查取消标志
             if context and context.is_cancelled():
@@ -245,6 +249,11 @@ class AgentLoop:
             if response.tool_calls:
                 # LLM 选择调用工具
                 for tc in response.tool_calls:
+                    if context:
+                        await context.wait_if_paused()
+                        if context.is_cancelled():
+                            force_answer_reason = "cancelled"
+                            break
                     # 通知前端
                     result = ""
                     async for tool_event in self._execute_tool(
@@ -273,10 +282,17 @@ class AgentLoop:
                         "tool_call_id": tc.id,
                     })
 
+                if force_answer_reason == "cancelled":
+                    break
+
                 # 继续循环，让 LLM 处理工具结果
                 continue
 
             elif response.content:
+                if context:
+                    await context.wait_if_paused()
+                    if context.is_cancelled():
+                        return
                 # LLM 给出最终文本回答，用 CitationParser 分离正文和引用标记。
                 # 字符级 SSE 输出统一由 chat.py 处理。
                 from app.services.citation import CitationParser
@@ -319,6 +335,10 @@ class AgentLoop:
         #   3. 没有可用工具
         if force_answer_reason == "cancelled":
             return
+        if context:
+            await context.wait_if_paused()
+            if context.is_cancelled():
+                return
         if force_answer_reason == "empty_response":
             logger.info("Forcing final answer due to empty LLM response")
             yield {

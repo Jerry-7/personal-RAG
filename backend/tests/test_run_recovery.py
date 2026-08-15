@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import json
 import unittest
@@ -118,6 +119,7 @@ class RunRecoveryTests(unittest.TestCase):
         )
         self.db.commit()
         run = self._run("interrupted-run", message.id, "running")
+        paused_run = self._run("paused-run", message.id, "paused")
         runtime = GoalRuntime(self.db, run.id)
         root, _ = runtime.create_root(
             title="question",
@@ -137,8 +139,10 @@ class RunRecoveryTests(unittest.TestCase):
         self.db.refresh(run)
         self.db.refresh(root)
         self.db.refresh(child)
-        self.assertEqual(recovered, 1)
+        self.db.refresh(paused_run)
+        self.assertEqual(recovered, 2)
         self.assertEqual(run.status, "interrupted")
+        self.assertEqual(paused_run.status, "interrupted")
         self.assertEqual(run.error_message, INTERRUPTED_MESSAGE)
         self.assertIsNotNone(run.completed_at)
         self.assertEqual(root.status, "failed")
@@ -149,6 +153,17 @@ class RunRecoveryTests(unittest.TestCase):
         ).all()
         self.assertEqual(len(failed_events), 2)
         self.assertEqual(recover_interrupted_agent_runs(self.db), 0)
+
+    def test_paused_run_blocks_duplicate_replay(self):
+        message = self._message(
+            "paused-question", "user", "question", datetime.now(timezone.utc)
+        )
+        self.db.commit()
+        source = self._run("paused-source", message.id, "failed")
+        self._run("paused-active", message.id, "paused")
+
+        with self.assertRaises(ValueError):
+            resolve_retry_source(self.db, source.id)
 
     def test_retry_link_migration_upgrades_legacy_agent_runs(self):
         engine = create_engine("sqlite:///:memory:")
@@ -184,6 +199,78 @@ class RunRecoveryTests(unittest.TestCase):
             )).scalar_one()
             self.assertEqual(linked, "source")
         engine.dispose()
+
+
+class RunControlTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(self.engine)
+        self.db = sessionmaker(bind=self.engine)()
+        self.conversation = Conversation(
+            id="controlled-conversation",
+            title="Control",
+            model_provider="ollama",
+            model_name="model",
+            embedding_provider="ollama",
+            embedding_model="embedding",
+        )
+        self.run = AgentRun(
+            id="controlled-run",
+            conversation_id=self.conversation.id,
+            mode="auto",
+            status="running",
+        )
+        self.db.add_all([self.conversation, self.run])
+        self.db.commit()
+
+    def tearDown(self):
+        from app.api.chat import _cancellation_flags, _pause_flags
+
+        _cancellation_flags.clear()
+        _pause_flags.clear()
+        self.db.close()
+        self.engine.dispose()
+
+    async def test_pause_resume_and_cancel_update_cooperative_events(self):
+        from app.api.chat import (
+            _cancellation_flags,
+            _pause_flags,
+            cancel_chat,
+            pause_chat,
+            resume_chat,
+        )
+
+        class JsonRequest:
+            def __init__(self, conversation_id: str):
+                self.conversation_id = conversation_id
+
+            async def json(self):
+                return {"conversation_id": self.conversation_id}
+
+        request = JsonRequest(self.conversation.id)
+        cancellation_event = asyncio.Event()
+        pause_event = asyncio.Event()
+        pause_event.set()
+        _cancellation_flags[self.conversation.id] = cancellation_event
+        _pause_flags[self.conversation.id] = pause_event
+
+        paused = await pause_chat(request, self.db)
+        self.db.refresh(self.run)
+        self.assertEqual(paused["status"], "paused")
+        self.assertEqual(self.run.status, "paused")
+        self.assertFalse(pause_event.is_set())
+
+        resumed = await resume_chat(request, self.db)
+        self.db.refresh(self.run)
+        self.assertEqual(resumed["status"], "running")
+        self.assertEqual(self.run.status, "running")
+        self.assertTrue(pause_event.is_set())
+
+        pause_event.clear()
+        cancelled = await cancel_chat(request)
+        self.assertEqual(cancelled["status"], "cancelled")
+        self.assertTrue(pause_event.is_set())
+        self.assertTrue(cancellation_event.is_set())
 
 
 class RunReplayGeneratorTests(unittest.IsolatedAsyncioTestCase):

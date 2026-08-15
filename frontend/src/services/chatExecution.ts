@@ -1,5 +1,7 @@
 import {
   cancelChat,
+  pauseChat,
+  resumeChat,
   streamChatQuery,
   streamChatRetry,
 } from '../api/chat';
@@ -33,6 +35,7 @@ function callbacks(): ChatStreamCallbacks {
     onRunStarted: (runId, conversationId) => {
       const state = useChatStore.getState();
       state.setRunId(runId);
+      state.setPaused(false);
       if (conversationId) state.setConversationId(conversationId);
     },
     onRouteSelected: (selection) => {
@@ -98,4 +101,18 @@ export async function stopChatExecution(): Promise<void> {
   state.cancelStreaming();
   activeController?.abort();
   activeController = null;
+}
+
+export async function pauseChatExecution(): Promise<void> {
+  const state = useChatStore.getState();
+  if (!state.isStreaming || state.isPaused || !state.conversationId) return;
+  await pauseChat(state.conversationId);
+  useChatStore.getState().setPaused(true);
+}
+
+export async function resumeChatExecution(): Promise<void> {
+  const state = useChatStore.getState();
+  if (!state.isStreaming || !state.isPaused || !state.conversationId) return;
+  await resumeChat(state.conversationId);
+  useChatStore.getState().setPaused(false);
 }

@@ -19,6 +19,7 @@ class AgentRunContext:
     agent_profile: str = "standard_research"
     tool_call_budget: int = 5
     cancellation_event: Any | None = None
+    pause_event: Any | None = None
     citations: list[dict[str, Any]] = field(default_factory=list)
     citation_counter: int = 0
     web_page_budget: int = 8
@@ -31,6 +32,11 @@ class AgentRunContext:
 
     def is_cancelled(self) -> bool:
         return bool(self.cancellation_event and self.cancellation_event.is_set())
+
+    async def wait_if_paused(self) -> None:
+        """Wait until execution may cross the next Agent boundary."""
+        if self.pause_event is not None:
+            await self.pause_event.wait()
 
     def register_source(self, source: dict[str, Any]) -> int:
         self.citation_counter += 1

@@ -281,6 +281,7 @@ class Supervisor:
                         agent_profile=profile.name,
                         tool_call_budget=profile.tool_call_budget,
                         cancellation_event=self.context.cancellation_event,
+                        pause_event=self.context.pause_event,
                         web_page_budget=(
                             self.context.web_page_budget if spec.mode == "web" else 0
                         ),

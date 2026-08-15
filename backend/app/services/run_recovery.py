@@ -32,7 +32,7 @@ def resolve_retry_source(db: Session, run_id: str) -> RetrySource:
         db.query(AgentRun)
         .filter(
             AgentRun.conversation_id == run.conversation_id,
-            AgentRun.status == "running",
+            AgentRun.status.in_(("running", "paused")),
         )
         .first()
     )
@@ -52,7 +52,9 @@ def resolve_retry_source(db: Session, run_id: str) -> RetrySource:
 
 def recover_interrupted_agent_runs(db: Session) -> int:
     """Mark runs left active by a stopped process as durably interrupted."""
-    runs = db.query(AgentRun).filter(AgentRun.status == "running").all()
+    runs = db.query(AgentRun).filter(
+        AgentRun.status.in_(("running", "paused"))
+    ).all()
     for run in runs:
         runtime = GoalRuntime(db, run.id)
         goals = (

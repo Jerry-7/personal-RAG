@@ -32,6 +32,13 @@ STREAM_CHARACTER_DELAY_SECONDS = 0.006
 
 # 取消生成的事件标志 (key: conversation_id)
 _cancellation_flags: dict[str, asyncio.Event] = {}
+_pause_flags: dict[str, asyncio.Event] = {}
+
+
+def _running_pause_event() -> asyncio.Event:
+    event = asyncio.Event()
+    event.set()
+    return event
 
 
 def _stream_error(message: str) -> EventSourceResponse:
@@ -145,6 +152,7 @@ async def chat_query(
         )
 
     _cancellation_flags[conversation_id] = asyncio.Event()
+    _pause_flags[conversation_id] = _running_pause_event()
 
     # ── 启动 Agent ────────────────────────────────────────────
     stream = _agent_event_generator(
@@ -185,6 +193,10 @@ async def _agent_event_generator(
     from app.services.goal_runtime import GoalRuntime, serialize_event
 
     cancellation_event = _cancellation_flags.setdefault(conversation_id, asyncio.Event())
+    pause_event = _pause_flags.get(conversation_id)
+    if pause_event is None:
+        pause_event = _running_pause_event()
+        _pause_flags[conversation_id] = pause_event
     route_decision = ComplexityRouter().route(
         question,
         mode=mode,
@@ -232,6 +244,7 @@ async def _agent_event_generator(
         goal_node_id=agent_goal.id,
         mode=mode,
         cancellation_event=cancellation_event,
+        pause_event=pause_event,
         allowed_tool_sources=agent_profile.allowed_tool_sources,
         agent_profile=agent_profile.name,
         tool_call_budget=agent_profile.tool_call_budget,
@@ -322,6 +335,9 @@ async def _agent_event_generator(
                 is_citation_marker = bool(re.fullmatch(r"\[\d+\]", token_text))
                 chunks = [token_text] if is_citation_marker else token_text
                 for character in chunks:
+                    await run_context.wait_if_paused()
+                    if run_context.is_cancelled():
+                        break
                     yield {"event": "token", "data": json.dumps({"text": character})}
                     if not is_citation_marker:
                         await asyncio.sleep(STREAM_CHARACTER_DELAY_SECONDS)
@@ -495,8 +511,10 @@ async def _agent_event_generator(
         }
     finally:
         # 清理取消标志
-        if conversation_id and conversation_id in _cancellation_flags:
-            del _cancellation_flags[conversation_id]
+        if _cancellation_flags.get(conversation_id) is cancellation_event:
+            _cancellation_flags.pop(conversation_id, None)
+        if _pause_flags.get(conversation_id) is pause_event:
+            _pause_flags.pop(conversation_id, None)
 
 
 @router.post("/chat/cancel")
@@ -514,9 +532,74 @@ async def cancel_chat(request: Request):
     conversation_id = body.get("conversation_id", "")
 
     if conversation_id and conversation_id in _cancellation_flags:
+        pause_event = _pause_flags.get(conversation_id)
+        if pause_event is not None:
+            pause_event.set()
         _cancellation_flags[conversation_id].set()
         return {"status": "cancelled", "conversation_id": conversation_id}
     return {"status": "not_found", "message": "没有正在进行的生成或对话 ID 无效"}
+
+
+@router.post("/chat/pause")
+async def pause_chat(request: Request, db: Session = Depends(get_db)):
+    """Pause an active Agent run at its next cooperative boundary."""
+    body = await request.json()
+    conversation_id = str(body.get("conversation_id") or "")
+    pause_event = _pause_flags.get(conversation_id)
+    if pause_event is None:
+        return {"status": "not_found", "message": "No active run for this conversation"}
+
+    agent_run = (
+        db.query(AgentRun)
+        .filter(
+            AgentRun.conversation_id == conversation_id,
+            AgentRun.status.in_(("running", "paused")),
+        )
+        .order_by(AgentRun.started_at.desc())
+        .first()
+    )
+    if agent_run is None:
+        return {"status": "not_found", "message": "No active run for this conversation"}
+
+    pause_event.clear()
+    agent_run.status = "paused"
+    db.commit()
+    return {
+        "status": "paused",
+        "conversation_id": conversation_id,
+        "run_id": agent_run.id,
+    }
+
+
+@router.post("/chat/resume")
+async def resume_chat(request: Request, db: Session = Depends(get_db)):
+    """Resume a cooperatively paused Agent run."""
+    body = await request.json()
+    conversation_id = str(body.get("conversation_id") or "")
+    pause_event = _pause_flags.get(conversation_id)
+    if pause_event is None:
+        return {"status": "not_found", "message": "No paused run for this conversation"}
+
+    agent_run = (
+        db.query(AgentRun)
+        .filter(
+            AgentRun.conversation_id == conversation_id,
+            AgentRun.status == "paused",
+        )
+        .order_by(AgentRun.started_at.desc())
+        .first()
+    )
+    if agent_run is None:
+        return {"status": "not_found", "message": "No paused run for this conversation"}
+
+    agent_run.status = "running"
+    db.commit()
+    pause_event.set()
+    return {
+        "status": "running",
+        "conversation_id": conversation_id,
+        "run_id": agent_run.id,
+    }
 
 
 @router.get("/chat/history")

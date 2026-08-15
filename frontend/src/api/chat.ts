@@ -143,6 +143,31 @@ export async function cancelChat(conversationId: string): Promise<void> {
   if (result.status !== 'cancelled') throw new Error('当前没有可取消的运行');
 }
 
+async function updateChatRunState(
+  action: 'pause' | 'resume',
+  conversationId: string,
+  expectedStatus: 'paused' | 'running',
+): Promise<void> {
+  const response = await fetch(`/api/chat/${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ conversation_id: conversationId }),
+  });
+  if (!response.ok) throw new Error(`运行控制请求失败: ${response.status}`);
+  const result = await response.json() as { status?: string; message?: string };
+  if (result.status !== expectedStatus) {
+    throw new Error(result.message || '运行状态已发生变化');
+  }
+}
+
+export function pauseChat(conversationId: string): Promise<void> {
+  return updateChatRunState('pause', conversationId, 'paused');
+}
+
+export function resumeChat(conversationId: string): Promise<void> {
+  return updateChatRunState('resume', conversationId, 'running');
+}
+
 export async function listConversations(): Promise<ConversationSummary[]> {
   const { data } = await client.get<{ conversations: ConversationSummary[] }>('/chat/history');
   return data.conversations;

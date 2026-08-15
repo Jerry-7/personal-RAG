@@ -14,6 +14,8 @@ interface ChatState {
   messages: MessageItem[];
   /** 是否正在流式生成 */
   isStreaming: boolean;
+  /** Whether the active Agent run is cooperatively paused. */
+  isPaused: boolean;
   /** 当前流式生成的文本缓冲区 */
   streamingText: string;
   /** 当前流式消息中的引用列表 */
@@ -39,6 +41,7 @@ interface ChatState {
   setLoadingHistory: (loading: boolean) => void;
   restoreConversation: (id: string, messages: MessageItem[]) => void;
   setRunId: (id: string) => void;
+  setPaused: (paused: boolean) => void;
   setRouteSelection: (selection: RouteSelection) => void;
   applyRunEvent: (event: RunEventData) => void;
   addToolCall: (id: string, nodeId: string, name: string, args: Record<string, unknown>) => void;
@@ -49,6 +52,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   conversationId: localStorage.getItem('personal-rag.conversation-id'),
   messages: [],
   isStreaming: false,
+  isPaused: false,
   streamingText: '',
   streamingCitations: [],
   citationCounter: 0,
@@ -77,7 +81,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   startStreaming: () =>
-    set({ isStreaming: true, streamingText: '', streamingCitations: [], citationCounter: 0, agentSteps: [], runId: null, routeSelection: null, goalNodes: [], runEvents: [] }),
+    set({ isStreaming: true, isPaused: false, streamingText: '', streamingCitations: [], citationCounter: 0, agentSteps: [], runId: null, routeSelection: null, goalNodes: [], runEvents: [] }),
 
   appendToken: (text) =>
     set((s) => ({ streamingText: s.streamingText + text })),
@@ -92,7 +96,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!state.isStreaming) return;
     const content = state.streamingText.trim();
     if (!content) {
-      set({ isStreaming: false, streamingText: '', streamingCitations: [] });
+      set({ isStreaming: false, isPaused: false, streamingText: '', streamingCitations: [] });
       return;
     }
     const msg: MessageItem = {
@@ -105,17 +109,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({
       messages: [...state.messages, msg],
       isStreaming: false,
+      isPaused: false,
       streamingText: '',
       streamingCitations: [],
     });
   },
 
   cancelStreaming: () =>
-    set({ isStreaming: false, streamingText: '', streamingCitations: [] }),
+    set({ isStreaming: false, isPaused: false, streamingText: '', streamingCitations: [] }),
 
   clearMessages: () => {
     localStorage.removeItem('personal-rag.conversation-id');
-    set({ messages: [], conversationId: null, agentSteps: [], runId: null, routeSelection: null, goalNodes: [], runEvents: [], isLoadingHistory: false });
+    set({ messages: [], conversationId: null, agentSteps: [], runId: null, routeSelection: null, goalNodes: [], runEvents: [], isLoadingHistory: false, isPaused: false });
   },
   setLoadingHistory: (loading) => set({ isLoadingHistory: loading }),
   restoreConversation: (id, messages) => {
@@ -125,6 +130,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages,
       isLoadingHistory: false,
       isStreaming: false,
+      isPaused: false,
       streamingText: '',
       streamingCitations: [],
       agentSteps: [],
@@ -135,6 +141,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
   setRunId: (id) => set({ runId: id }),
+  setPaused: (paused) => set({ isPaused: paused }),
   setRouteSelection: (selection) => set({ routeSelection: selection }),
   applyRunEvent: (event) => set((state) => {
     const goal = event.payload.goal;

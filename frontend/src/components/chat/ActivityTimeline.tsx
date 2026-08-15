@@ -10,6 +10,8 @@ import {
   GitMerge,
   Globe2,
   Loader2,
+  Pause,
+  Play,
   Route,
   RotateCcw,
   Search,
@@ -19,7 +21,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useChatStore } from '../../store/chatStore';
-import { retryChatRun } from '../../services/chatExecution';
+import { pauseChatExecution, resumeChatExecution, retryChatRun } from '../../services/chatExecution';
 import type { AgentStep, GoalNodeData } from '../../types/chat';
 
 const toolLabels: Record<string, string> = {
@@ -182,10 +184,12 @@ function GoalBranch({ goal, goals, steps, compact = false }: GoalBranchProps) {
 
 export function ActivityTimeline() {
   const [expanded, setExpanded] = useState(true);
+  const [controlPending, setControlPending] = useState(false);
   const steps = useChatStore((state) => state.agentSteps);
   const routeSelection = useChatStore((state) => state.routeSelection);
   const goalNodes = useChatStore((state) => state.goalNodes);
   const isStreaming = useChatStore((state) => state.isStreaming);
+  const isPaused = useChatStore((state) => state.isPaused);
   const runId = useChatStore((state) => state.runId);
 
   if (!steps.length && !routeSelection && !goalNodes.length) return null;
@@ -200,6 +204,18 @@ export function ActivityTimeline() {
       && roots.some((goal) => goal.status === 'failed' || goal.status === 'cancelled')
   );
   const activityCount = steps.length + goalNodes.length + (routeSelection ? 1 : 0);
+  const togglePaused = async () => {
+    if (controlPending) return;
+    setControlPending(true);
+    try {
+      if (isPaused) await resumeChatExecution();
+      else await pauseChatExecution();
+    } catch (error) {
+      console.error('Failed to update Agent run state', error);
+    } finally {
+      setControlPending(false);
+    }
+  };
 
   return (
     <div className="ml-11 mr-2 min-w-0 border-l-2 border-gray-200 pl-3 dark:border-gray-700">
@@ -210,8 +226,20 @@ export function ActivityTimeline() {
           className="flex h-8 min-w-0 flex-1 items-center gap-2 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
         >
           {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
-          <span className="truncate">{running ? '正在执行' : `执行活动 · ${activityCount} 项`}</span>
+          <span className="truncate">{isPaused ? '已暂停' : running ? '正在执行' : `执行活动 · ${activityCount} 项`}</span>
         </button>
+        {isStreaming && runId && (
+          <button
+            type="button"
+            onClick={() => void togglePaused()}
+            disabled={controlPending}
+            className="flex h-7 shrink-0 items-center gap-1 px-2 text-[11px] font-medium text-gray-600 hover:text-gray-900 disabled:opacity-50 dark:text-gray-400 dark:hover:text-gray-100"
+            title={isPaused ? '继续执行' : '暂停执行'}
+          >
+            {isPaused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+            {isPaused ? '继续' : '暂停'}
+          </button>
+        )}
         {retryable && runId && (
           <button
             type="button"

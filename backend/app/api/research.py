@@ -18,7 +18,7 @@ async def get_research_run(run_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="研究运行不存在")
     has_active_run = db.query(AgentRun.id).filter(
         AgentRun.conversation_id == run.conversation_id,
-        AgentRun.status == "running",
+        AgentRun.status.in_(("running", "paused")),
     ).first() is not None
     executions = db.query(ToolExecution).filter(ToolExecution.run_id == run_id).order_by(ToolExecution.created_at).all()
     goals = db.query(GoalNode).filter(GoalNode.run_id == run_id).order_by(GoalNode.sequence).all()

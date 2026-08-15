@@ -1,3 +1,4 @@
+import asyncio
 import json
 import importlib.util
 from pathlib import Path
@@ -22,6 +23,10 @@ from app.services.notes import note_service
 from app.services.web_fetcher import FetchedPage, WebFetcher
 from app.services.web_research import WebResearchService
 from app.services.web_search import SearXNGProvider
+
+
+async def _collect_events(stream):
+    return [event async for event in stream]
 
 
 class WebSafetyTests(unittest.IsolatedAsyncioTestCase):
@@ -179,6 +184,59 @@ class AgentInputProcessorTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentEmptyResponseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_agent_waits_at_pause_boundary_before_model_call(self):
+        registry = ToolRegistry()
+
+        async def local_tool():
+            return "ok"
+
+        registry.register(
+            "local", "local", {"type": "object"}, local_tool, source="builtin"
+        )
+
+        class Processor:
+            async def optimize(self, provider, question, chat_history):
+                return UserInputPlan(
+                    original_question=question,
+                    standalone_question=question,
+                    search_queries=[],
+                    rewritten=False,
+                )
+
+        class Provider:
+            def __init__(self):
+                self.called = asyncio.Event()
+
+            async def chat_with_tools(self, **kwargs):
+                self.called.set()
+                return AgentResponse(content="answer")
+
+        provider = Provider()
+        pause_event = asyncio.Event()
+        loop = AgentLoop(
+            provider=provider,
+            max_iterations=1,
+            tools=registry,
+            input_processor=Processor(),
+        )
+        context = AgentRunContext(
+            db=None,
+            conversation_id="conv",
+            pause_event=pause_event,
+        )
+
+        task = asyncio.create_task(
+            _collect_events(loop.run("question", context=context))
+        )
+        await asyncio.sleep(0)
+        self.assertFalse(provider.called.is_set())
+
+        pause_event.set()
+        events = await asyncio.wait_for(task, timeout=1)
+
+        self.assertTrue(provider.called.is_set())
+        self.assertTrue(any(event["event"] == "token" for event in events))
+
     async def test_web_mode_uses_rewritten_query_but_keeps_original_request(self):
         registry = ToolRegistry()
         searched_queries = []
