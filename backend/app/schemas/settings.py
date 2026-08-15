@@ -38,6 +38,13 @@ class RAGConfig(BaseModel):
     final_top_k: int = Field(4, description="最终使用的分块数", ge=1, le=20)
 
 
+class AgentModelConfig(BaseModel):
+    """Optional model overrides for complexity-routed Agent tiers."""
+    fast: str = ""
+    standard: str = ""
+    expert: str = ""
+
+
 class AppSettingsResponse(BaseModel):
     """应用完整设置响应。"""
     llm_provider: str = Field("ollama", description="当前 LLM provider")
@@ -45,6 +52,7 @@ class AppSettingsResponse(BaseModel):
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
+    agent_models: AgentModelConfig = Field(default_factory=AgentModelConfig)
     rag: RAGConfig = Field(default_factory=RAGConfig)
 
 
@@ -55,6 +63,7 @@ class AppSettingsUpdate(BaseModel):
     ollama: Optional[OllamaConfig] = None
     openai: Optional[OpenAIConfig] = None
     anthropic: Optional[AnthropicConfig] = None
+    agent_models: Optional[AgentModelConfig] = None
     rag: Optional[RAGConfig] = None
 
 

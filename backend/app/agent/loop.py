@@ -111,6 +111,7 @@ class AgentLoop:
         max_iterations: Optional[int] = None,
         tools: Optional[Any] = None,
         input_processor: AgentInputProcessor | None = None,
+        model_name: str | None = None,
     ) -> None:
         """
         初始化 Agent 循环。
@@ -124,6 +125,7 @@ class AgentLoop:
         self.max_iterations = max_iterations or settings.agent_max_iterations
         self.tools = tools or tool_registry
         self.input_processor = input_processor or AgentInputProcessor()
+        self.model_name = model_name
 
     async def run(
         self,
@@ -237,6 +239,7 @@ class AgentLoop:
                 response: AgentResponse = await self.provider.chat_with_tools(
                     messages=messages,
                     tools=tools_schema,
+                    model=self.model_name,
                     max_tokens=4096,
                 )
             except Exception as e:
@@ -384,6 +387,7 @@ class AgentLoop:
         emitted_content = False
         async for token in self.provider.chat_stream(
             messages=messages,
+            model=self.model_name,
             max_tokens=4096,
         ):
             if token:

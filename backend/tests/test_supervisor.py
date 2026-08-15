@@ -1,6 +1,7 @@
 import asyncio
 import json
 import unittest
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -8,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from app.agent.context import AgentRunContext
 from app.agent.routing import AgentProfile, build_default_agent_registry
 from app.agent.supervisor import Supervisor
+from app.config import settings
 from app.db.database import Base
 from app.db.models import GoalNode
 from app.services.goal_runtime import GoalRuntime
@@ -144,6 +146,12 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.engine.dispose()
 
     async def test_auto_mode_runs_two_workers_then_synthesizer(self):
+        standard_patch = patch.object(settings, "agent_standard_model", "standard-model")
+        expert_patch = patch.object(settings, "agent_expert_model", "expert-model")
+        standard_patch.start()
+        expert_patch.start()
+        self.addCleanup(standard_patch.stop)
+        self.addCleanup(expert_patch.stop)
         registry = build_default_agent_registry()
         supervisor = Supervisor(
             provider=object(),  # type: ignore[arg-type]
@@ -172,6 +180,10 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
             ["local_retriever", "web_researcher", "expert_synthesizer"],
         )
         self.assertTrue(all(goal.status == "completed" for goal in worker_goals))
+        self.assertEqual(
+            [goal.model_name for goal in worker_goals],
+            ["standard-model", "standard-model", "expert-model"],
+        )
         dependencies = json.loads(worker_goals[-1].dependencies_json)
         self.assertEqual(dependencies, [worker_goals[0].id, worker_goals[1].id])
         self.assertIn(

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.agent.context import AgentRunContext
 from app.agent.loop import AgentLoop
+from app.agent.model_selection import AgentModelSelection, select_agent_model
 from app.agent.routing import AgentProfile, AgentRegistry
 from app.db.database import SessionLocal
 from app.db.models import GoalNode
@@ -70,6 +71,7 @@ class Supervisor:
         self.context = context
         self.agent_factory = agent_factory or self._default_agent_factory
         self.session_factory = session_factory or SessionLocal
+        self._model_selections: dict[str, AgentModelSelection] = {}
 
     async def run(
         self,
@@ -95,6 +97,7 @@ class Supervisor:
             worker_entries: list[tuple[WorkerSpec, AgentProfile, GoalNode]] = []
             for spec in plan:
                 profile = self.registry.for_role(spec.role)
+                model_selection = self._model_selection(profile)
                 goal, events = self.goal_runtime.create_child(
                     parent=self.parent_goal,
                     title=spec.title,
@@ -103,6 +106,8 @@ class Supervisor:
                     input_data={"question": question, "mode": spec.mode, "role": spec.role},
                     max_attempts=profile.max_attempts,
                     tool_call_budget=profile.tool_call_budget,
+                    model_provider=model_selection.provider,
+                    model_name=model_selection.model,
                 )
                 worker_goal_ids.append(goal.id)
                 worker_entries.append((spec, profile, goal))
@@ -183,6 +188,7 @@ class Supervisor:
                 return
 
             synth_profile = self.registry.for_role("synthesizer")
+            synth_model_selection = self._model_selection(synth_profile)
             synth_goal, synth_events = self.goal_runtime.create_child(
                 parent=self.parent_goal,
                 title="汇总研究结果",
@@ -191,6 +197,8 @@ class Supervisor:
                 input_data={"question": question, "role": "synthesizer"},
                 dependencies=worker_goal_ids,
                 tool_call_budget=synth_profile.tool_call_budget,
+                model_provider=synth_model_selection.provider,
+                model_name=synth_model_selection.model,
             )
             for event in synth_events:
                 yield self._event(event)
@@ -373,7 +381,19 @@ class Supervisor:
         return re.sub(r"\[(\d+)]", replace, report)
 
     def _default_agent_factory(self, profile: AgentProfile) -> AgentLoop:
-        return AgentLoop(provider=self.provider, max_iterations=profile.max_iterations)
+        selection = self._model_selection(profile)
+        return AgentLoop(
+            provider=self.provider,
+            max_iterations=profile.max_iterations,
+            model_name=selection.model,
+        )
+
+    def _model_selection(self, profile: AgentProfile) -> AgentModelSelection:
+        selection = self._model_selections.get(profile.name)
+        if selection is None:
+            selection = select_agent_model(profile)
+            self._model_selections[profile.name] = selection
+        return selection
 
     def _select_context(self, goal: GoalNode, profile: AgentProfile, mode: str) -> None:
         self.context.goal_node_id = goal.id

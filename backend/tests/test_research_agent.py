@@ -206,8 +206,10 @@ class AgentEmptyResponseTests(unittest.IsolatedAsyncioTestCase):
         class Provider:
             def __init__(self):
                 self.called = asyncio.Event()
+                self.model = None
 
             async def chat_with_tools(self, **kwargs):
+                self.model = kwargs.get("model")
                 self.called.set()
                 return AgentResponse(content="answer")
 
@@ -218,6 +220,7 @@ class AgentEmptyResponseTests(unittest.IsolatedAsyncioTestCase):
             max_iterations=1,
             tools=registry,
             input_processor=Processor(),
+            model_name="fast-model",
         )
         context = AgentRunContext(
             db=None,
@@ -235,6 +238,7 @@ class AgentEmptyResponseTests(unittest.IsolatedAsyncioTestCase):
         events = await asyncio.wait_for(task, timeout=1)
 
         self.assertTrue(provider.called.is_set())
+        self.assertEqual(provider.model, "fast-model")
         self.assertTrue(any(event["event"] == "token" for event in events))
 
     async def test_web_mode_uses_rewritten_query_but_keeps_original_request(self):

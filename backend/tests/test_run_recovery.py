@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db.database import Base
 from app.db.models import AgentRun, Conversation, GoalNode, Message, RunEvent
+from app.config import settings
 from app.providers.base import AgentResponse
 from app.services.conversation_memory import conversation_memory
 from app.services.goal_runtime import GoalRuntime
@@ -311,13 +312,20 @@ class RunReplayGeneratorTests(unittest.IsolatedAsyncioTestCase):
         from app.services.generator import generator
 
         class Provider:
+            model = None
+
             async def chat_with_tools(self, **kwargs):
+                self.model = kwargs.get("model")
                 return AgentResponse(content="replayed answer")
 
-        with patch.object(
-            generator,
-            "_get_provider",
-            new=AsyncMock(return_value=Provider()),
+        provider = Provider()
+        with (
+            patch.object(
+                generator,
+                "_get_provider",
+                new=AsyncMock(return_value=provider),
+            ),
+            patch.object(settings, "agent_fast_model", "fast-replay-model"),
         ):
             events = [
                 event
@@ -342,6 +350,8 @@ class RunReplayGeneratorTests(unittest.IsolatedAsyncioTestCase):
         ).all()
         self.assertEqual(retried_run.status, "completed")
         self.assertEqual(retried_run.user_message_id, self.user_message.id)
+        self.assertEqual(retried_run.model_name, "fast-replay-model")
+        self.assertEqual(provider.model, "fast-replay-model")
         self.assertEqual(len(user_messages), 1)
         self.assertTrue(any(event["event"] == "done" for event in events))
         run_started = next(event for event in events if event["event"] == "run_started")

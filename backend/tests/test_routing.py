@@ -1,7 +1,9 @@
 import unittest
+from types import SimpleNamespace
 
 from app.agent.context import AgentRunContext
 from app.agent.loop import AgentLoop
+from app.agent.model_selection import select_agent_model
 from app.agent.routing import ComplexityRouter, build_default_agent_registry
 from app.agent.tools import ToolRegistry
 
@@ -52,6 +54,32 @@ class AgentRegistryTests(unittest.TestCase):
         registry = build_default_agent_registry()
         with self.assertRaises(ValueError):
             registry.register(registry.require("fast_general"))
+
+    def test_model_selection_uses_tier_override_and_explicit_default(self):
+        registry = build_default_agent_registry()
+        config = SimpleNamespace(
+            llm_provider="ollama",
+            ollama_llm_model="default-model",
+            openai_llm_model="openai-default",
+            anthropic_llm_model="anthropic-default",
+            agent_fast_model="small-model",
+            agent_standard_model=None,
+            agent_expert_model="large-model",
+        )
+
+        fast = select_agent_model(registry.require("fast_general"), config=config)
+        standard = select_agent_model(
+            registry.require("standard_research"), config=config
+        )
+        synthesizer = select_agent_model(
+            registry.require("expert_synthesizer"), config=config
+        )
+
+        self.assertEqual((fast.model, fast.model_key), ("small-model", "fast"))
+        self.assertFalse(fast.uses_default)
+        self.assertEqual(standard.model, "default-model")
+        self.assertTrue(standard.uses_default)
+        self.assertEqual(synthesizer.model, "large-model")
 
 
 class AgentToolPolicyTests(unittest.IsolatedAsyncioTestCase):

@@ -1,7 +1,11 @@
+import importlib.util
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-from sqlalchemy import create_engine
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from app.api.research import get_research_run, list_research_runs
@@ -34,6 +38,8 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
             route_score=6,
             route_reasons_json='["complex_intent"]',
             route_requires_decomposition=True,
+            model_provider="ollama",
+            model_name="expert-model",
             status="completed",
             web_page_budget=8,
             web_pages_used=3,
@@ -55,6 +61,8 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
             agent_profile="web_researcher",
             input_data={},
             tool_call_budget=7,
+            model_provider="ollama",
+            model_name="standard-model",
         )
         self.tool = ToolExecution(
             id="tool-execution",
@@ -97,6 +105,7 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source_summary["metrics"]["tool_calls_used"], 1)
         self.assertEqual(source_summary["metrics"]["tool_call_budget"], 7)
         self.assertEqual(source_summary["routing"]["route"], "supervisor")
+        self.assertEqual(source_summary["model_name"], "expert-model")
 
         detail = await get_research_run(self.run.id, self.db)
 
@@ -105,5 +114,60 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(detail["metrics"]["duration_ms"], 2000)
         self.assertEqual(detail["metrics"]["tool_duration_ms"], 125)
         self.assertEqual(detail["goals"][1]["tool_call_budget"], 7)
+        self.assertEqual(detail["goals"][1]["model_name"], "standard-model")
         self.assertEqual(detail["tools"][0]["name"], "web_search")
         self.assertEqual(detail["tools"][0]["arguments"], {"query": "test"})
+
+
+class ModelRoutingMigrationTests(unittest.TestCase):
+    def test_model_routing_migration_backfills_runs_and_goals(self):
+        engine = create_engine("sqlite:///:memory:")
+        migration_path = (
+            Path(__file__).parents[1]
+            / "alembic"
+            / "versions"
+            / "20260815_04_agent_model_routing.py"
+        )
+        spec = importlib.util.spec_from_file_location("model_routing_migration", migration_path)
+        assert spec and spec.loader
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE conversations (id VARCHAR(36) PRIMARY KEY, "
+                "model_provider VARCHAR(32), model_name VARCHAR(256))"
+            ))
+            connection.execute(text(
+                "CREATE TABLE agent_runs (id VARCHAR(36) PRIMARY KEY, "
+                "conversation_id VARCHAR(36))"
+            ))
+            connection.execute(text(
+                "CREATE TABLE goal_nodes (id VARCHAR(36) PRIMARY KEY, run_id VARCHAR(36))"
+            ))
+            connection.execute(text(
+                "INSERT INTO conversations VALUES ('conversation', 'ollama', 'legacy-model')"
+            ))
+            connection.execute(text(
+                "INSERT INTO agent_runs VALUES ('run', 'conversation')"
+            ))
+            connection.execute(text(
+                "INSERT INTO goal_nodes VALUES ('goal', 'run')"
+            ))
+            migration.op = Operations(MigrationContext.configure(connection))
+            migration.upgrade()
+            migration.upgrade()
+
+            run_model = connection.execute(text(
+                "SELECT model_provider, model_name FROM agent_runs WHERE id = 'run'"
+            )).one()
+            goal_model = connection.execute(text(
+                "SELECT model_provider, model_name FROM goal_nodes WHERE id = 'goal'"
+            )).one()
+            self.assertEqual(tuple(run_model), ("ollama", "legacy-model"))
+            self.assertEqual(tuple(goal_model), ("ollama", "legacy-model"))
+            self.assertIn(
+                "model_name",
+                {column["name"] for column in inspect(connection).get_columns("goal_nodes")},
+            )
+        engine.dispose()

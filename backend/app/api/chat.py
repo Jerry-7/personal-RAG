@@ -187,6 +187,7 @@ async def _agent_event_generator(
     """
     from app.agent.loop import AgentLoop
     from app.agent.context import AgentRunContext
+    from app.agent.model_selection import select_agent_model
     from app.agent.routing import ComplexityRouter, build_default_agent_registry
     from app.agent.supervisor import Supervisor
     from app.services.generator import generator as gen_service
@@ -204,6 +205,7 @@ async def _agent_event_generator(
     )
     agent_registry = build_default_agent_registry()
     agent_profile = agent_registry.for_decision(route_decision)
+    model_selection = select_agent_model(agent_profile)
     # 构建数据库AgentRun对象
     agent_run = AgentRun(
         conversation_id=conversation_id,
@@ -216,6 +218,8 @@ async def _agent_event_generator(
         route_score=route_decision.score,
         route_reasons_json=json.dumps(route_decision.reasons),
         route_requires_decomposition=route_decision.requires_decomposition,
+        model_provider=model_selection.provider,
+        model_name=model_selection.model,
         status="running",
         web_page_budget=settings.web_page_budget,
         max_depth=settings.web_crawl_max_depth,
@@ -236,6 +240,8 @@ async def _agent_event_generator(
         agent_profile=agent_profile.name,
         input_data={"question": question, "route": route_decision.route},
         tool_call_budget=agent_profile.tool_call_budget,
+        model_provider=model_selection.provider,
+        model_name=model_selection.model,
     )
     initial_goal_events.extend(agent_goal_events)
     # 构建上下文
@@ -261,6 +267,7 @@ async def _agent_event_generator(
     agent = AgentLoop(
         provider=llm_provider,
         max_iterations=agent_profile.max_iterations,
+        model_name=model_selection.model,
     )
 
     # [regist_citation_index, display_citation_index]
@@ -279,6 +286,7 @@ async def _agent_event_generator(
                 "mode": mode,
                 "web_page_budget": agent_run.web_page_budget,
                 "max_depth": agent_run.max_depth,
+                **model_selection.to_dict(),
             }),
         }
 
@@ -289,6 +297,7 @@ async def _agent_event_generator(
                 **route_decision.to_dict(),
                 "agent_profile": agent_profile.name,
                 "tool_call_budget": agent_profile.tool_call_budget,
+                **model_selection.to_dict(),
             }, ensure_ascii=False),
         }
 

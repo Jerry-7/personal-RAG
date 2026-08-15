@@ -89,6 +89,8 @@ def _routing(run: AgentRun, goals: list[GoalNode]) -> dict[str, Any]:
     max_children, max_depth = _tree_shape(goals)
     return {
         "agent_profile": run.agent_profile,
+        "model_provider": run.model_provider,
+        "model_name": run.model_name,
         "tool_call_budget": agent_goals[0].tool_call_budget if agent_goals else 0,
         "tier": run.route_tier,
         "route": run.route_name,
@@ -114,6 +116,8 @@ def _summary(
         "retry_count": retry_count,
         "mode": run.mode,
         "status": run.status,
+        "model_provider": run.model_provider,
+        "model_name": run.model_name,
         "routing": _routing(run, goals),
         "metrics": _metrics(run, goals, tools),
         "error_message": run.error_message,

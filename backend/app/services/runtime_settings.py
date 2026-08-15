@@ -37,6 +37,11 @@ GROUP_KEYS = {
         "page_budget": "web_page_budget",
         "snapshot_retention_days": "web_snapshot_retention_days",
     },
+    "agent_models": {
+        "fast": "agent_fast_model",
+        "standard": "agent_standard_model",
+        "expert": "agent_expert_model",
+    },
 }
 
 

@@ -35,6 +35,7 @@ class ArchitectureTests(unittest.TestCase):
             "llm_provider": "openai",
             "ollama": {"base_url": "http://ollama", "llm_model": "qwen"},
             "rag": {"chunk_size": 512, "chunk_overlap": 64},
+            "agent_models": {"fast": "small", "expert": "large"},
             "unknown": "ignored",
         }), {
             "llm_provider": "openai",
@@ -42,6 +43,8 @@ class ArchitectureTests(unittest.TestCase):
             "ollama_llm_model": "qwen",
             "chunk_size": 512,
             "chunk_overlap": 64,
+            "agent_fast_model": "small",
+            "agent_expert_model": "large",
         })
 
     def test_embedding_signature_selects_provider_model(self):

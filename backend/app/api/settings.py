@@ -56,6 +56,11 @@ async def get_settings(db: Session = Depends(get_db)):
             "api_key": None,  # 不返回 API key
             "llm_model": db_settings.get("anthropic_llm_model", app_settings.anthropic_llm_model),
         },
+        "agent_models": {
+            "fast": db_settings.get("agent_fast_model", app_settings.agent_fast_model) or "",
+            "standard": db_settings.get("agent_standard_model", app_settings.agent_standard_model) or "",
+            "expert": db_settings.get("agent_expert_model", app_settings.agent_expert_model) or "",
+        },
         "rag": {
             "chunk_size": int(db_settings.get("chunk_size", app_settings.chunk_size)),
             "chunk_overlap": int(db_settings.get("chunk_overlap", app_settings.chunk_overlap)),
