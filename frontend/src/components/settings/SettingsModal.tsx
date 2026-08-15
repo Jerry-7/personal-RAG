@@ -12,6 +12,13 @@ import { getSettings, updateSettings, getAvailableModels } from '../../api/setti
 import type { AppSettings, AvailableModels } from '../../types/settings';
 
 type TabKey = 'llm' | 'embedding' | 'rag' | 'web';
+type AgentTierKey = 'fast' | 'standard' | 'expert';
+
+const agentTierLabels: Record<AgentTierKey, string> = {
+  fast: '快速',
+  standard: '标准',
+  expert: '专家',
+};
 
 export function SettingsModal() {
   const { closeSettings } = useSettingsStore();
@@ -52,6 +59,21 @@ export function SettingsModal() {
       setIsSaving(false);
     }
   };
+
+  const providerModelOptions = settings.llm_provider === 'ollama'
+    ? models?.ollama_llm_models || []
+    : settings.llm_provider === 'openai'
+      ? models?.openai_llm_models || []
+      : models?.anthropic_models || [];
+  const providerDefaultModel = settings.llm_provider === 'ollama'
+    ? settings.ollama.llm_model
+    : settings.llm_provider === 'openai'
+      ? settings.openai.llm_model
+      : settings.anthropic.llm_model;
+  const agentModelOptions = Array.from(new Set([
+    ...providerModelOptions,
+    ...Object.values(settings.agent_models),
+  ].filter(Boolean)));
 
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'llm', label: 'LLM 模型' },
@@ -160,6 +182,34 @@ export function SettingsModal() {
                   onChange={(val) => setSettings({ ...settings, anthropic: { ...settings.anthropic, api_key: val } })}
                 />
               )}
+              <div className="border-t border-gray-200 pt-4 dark:border-gray-700">
+                <div className="mb-2 text-xs font-medium text-gray-500">Agent 模型等级</div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  {(Object.keys(agentTierLabels) as AgentTierKey[]).map((tier) => (
+                    <label key={tier} className="min-w-0">
+                      <span className="mb-1 block text-xs text-gray-500">
+                        {agentTierLabels[tier]}
+                      </span>
+                      <select
+                        value={settings.agent_models[tier]}
+                        onChange={(event) => setSettings({
+                          ...settings,
+                          agent_models: {
+                            ...settings.agent_models,
+                            [tier]: event.target.value,
+                          },
+                        })}
+                        className="h-9 w-full min-w-0 rounded border border-gray-300 bg-white px-2 text-xs dark:border-gray-600 dark:bg-gray-800"
+                      >
+                        <option value="">{`默认 · ${providerDefaultModel}`}</option>
+                        {agentModelOptions.map((model) => (
+                          <option key={model} value={model}>{model}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+              </div>
             </>
           )}
 

@@ -35,12 +35,19 @@ export interface WebResearchConfig {
   snapshot_retention_days: number;
 }
 
+export interface AgentModelsConfig {
+  fast: string;
+  standard: string;
+  expert: string;
+}
+
 export interface AppSettings {
   llm_provider: string;
   embedding_provider: string;
   ollama: OllamaConfig;
   openai: OpenAIConfig;
   anthropic: AnthropicConfig;
+  agent_models: AgentModelsConfig;
   rag: RAGConfig;
   web: WebResearchConfig;
 }

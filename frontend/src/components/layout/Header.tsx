@@ -20,6 +20,13 @@ export function Header() {
   const conversationId = useChatStore((s) => s.conversationId);
   const isStreaming = useChatStore((s) => s.isStreaming);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const activeModel = settings
+    ? settings.llm_provider === 'ollama'
+      ? settings.ollama.llm_model
+      : settings.llm_provider === 'openai'
+        ? settings.openai.llm_model
+        : settings.anthropic.llm_model
+    : '';
 
   useEffect(() => {
     void listConversations().then(setConversations).catch(() => setConversations([]));
@@ -50,7 +57,7 @@ export function Header() {
         </h1>
         {settings && (
           <span className="header-model text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-full">
-            {settings.llm_provider}: {settings.ollama.llm_model}
+            {settings.llm_provider}: {activeModel}
           </span>
         )}
       </div>

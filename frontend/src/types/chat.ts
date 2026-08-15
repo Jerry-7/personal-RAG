@@ -98,6 +98,10 @@ export interface AgentStep {
 
 export interface RouteSelection {
   agent_profile: string;
+  model_provider: string;
+  model_name: string;
+  model_key?: string;
+  model_uses_default?: boolean;
   tool_call_budget: number;
   tier: 'fast' | 'standard' | 'expert';
   route: 'direct' | 'tool_agent' | 'supervisor';
@@ -118,6 +122,8 @@ export interface GoalNodeData {
   kind: string;
   status: GoalStatus;
   agent_profile: string;
+  model_provider: string;
+  model_name: string;
   tool_call_budget: number;
   sequence: number;
   attempt: number;
@@ -162,6 +168,8 @@ export interface ResearchRunSummary {
   retry_count: number;
   mode: ChatMode;
   status: RunStatus;
+  model_provider: string;
+  model_name: string;
   routing: RouteSelection;
   metrics: RunMetrics;
   error_message: string | null;

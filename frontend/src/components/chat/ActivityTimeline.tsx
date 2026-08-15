@@ -145,6 +145,14 @@ function GoalBranch({ goal, goals, steps, compact = false }: GoalBranchProps) {
         <span className="shrink-0 text-[10px] text-gray-400">
           {profileLabels[goal.agent_profile] || goal.agent_profile}
         </span>
+        {goal.model_name && (
+          <span
+            className="max-w-32 shrink truncate text-[10px] text-gray-400"
+            title={`${goal.model_provider}: ${goal.model_name}`}
+          >
+            {goal.model_name}
+          </span>
+        )}
         {goal.tool_call_budget > 0 && (
           <span className="shrink-0 tabular-nums text-[10px] text-gray-400">
             工具 {goalSteps.length}/{goal.tool_call_budget}
@@ -355,6 +363,14 @@ export function ActivityTimeline() {
                 <span className="shrink-0 tabular-nums text-[10px] text-gray-400">
                   评分 {routeSelection.score} · 工具 ≤ {routeSelection.tool_call_budget}
                 </span>
+                {routeSelection.model_name && (
+                  <span
+                    className="max-w-36 shrink truncate text-[10px] text-gray-400"
+                    title={`${routeSelection.model_provider}: ${routeSelection.model_name}`}
+                  >
+                    {routeSelection.model_name}
+                  </span>
+                )}
                 <Check className="h-3.5 w-3.5 shrink-0 text-green-600" />
               </div>
               {!!routeSelection.reasons.length && (
