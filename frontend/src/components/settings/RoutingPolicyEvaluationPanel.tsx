@@ -1,6 +1,16 @@
-import { BarChart3, GitFork, Loader2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  BarChart3,
+  CheckCircle2,
+  CircleDashed,
+  GitCompare,
+  GitFork,
+  Loader2,
+  RotateCcw,
+} from 'lucide-react';
 import type {
   RoutingPolicyEvaluation,
+  RoutingPolicyExperiment,
   RoutingPolicySimulation,
   RoutingTier,
 } from '../../types/routingPolicy';
@@ -12,11 +22,104 @@ const tierLabels: Record<RoutingTier, string> = {
   expert: '专家',
 };
 const tiers: RoutingTier[] = ['fast', 'standard', 'expert'];
+const experimentStatusLabels: Record<RoutingPolicyExperiment['status'], string> = {
+  not_applicable: '无试验基线',
+  collecting: '采集运行样本',
+  awaiting_feedback: '等待质量反馈',
+  operational_alert: '运行指标告警',
+  ready: '样本已就绪',
+};
+const recommendationLabels: Record<RoutingPolicyExperiment['recommendation'], string> = {
+  not_applicable: '无需评估',
+  collect_runs: '继续收集运行',
+  collect_feedback: '继续收集反馈',
+  rollback: '建议回滚',
+  keep: '建议保留',
+  review: '需要人工复核',
+};
 
 function formatDuration(durationMs: number | null): string {
   if (durationMs === null) return '--';
   if (durationMs < 1000) return `${durationMs}ms`;
   return `${(durationMs / 1000).toFixed(1)}s`;
+}
+
+function formatDelta(value: number | null, suffix = 'pp'): string {
+  if (value === null) return '--';
+  return `${value > 0 ? '+' : ''}${value}${suffix}`;
+}
+
+function ExperimentSummary({ experiment }: { experiment: RoutingPolicyExperiment }) {
+  const RecommendationIcon = experiment.recommendation === 'keep'
+    ? CheckCircle2
+    : experiment.recommendation === 'rollback'
+      ? RotateCcw
+      : experiment.status === 'operational_alert'
+        ? AlertTriangle
+        : CircleDashed;
+  const recommendationColor = experiment.recommendation === 'keep'
+    ? 'text-green-600'
+    : experiment.recommendation === 'rollback'
+      ? 'text-red-500'
+      : experiment.recommendation === 'review'
+        ? 'text-amber-600'
+        : 'text-gray-500';
+  const runProgress = Math.min(
+    100,
+    experiment.readiness.terminal_run_count * 100 / experiment.readiness.minimum_terminal_runs,
+  );
+  const feedbackProgress = Math.min(
+    100,
+    experiment.readiness.rated_run_count * 100 / experiment.readiness.minimum_rated_runs,
+  );
+
+  return (
+    <div className="space-y-2 border-y border-gray-200 py-2 dark:border-gray-700">
+      <div className="flex min-h-6 flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
+        <GitCompare className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+        <span className="font-medium text-gray-600 dark:text-gray-300">
+          策略 v{experiment.current_policy_version}
+          {experiment.baseline_policy_version !== null && ` 对比 v${experiment.baseline_policy_version}`}
+        </span>
+        <span className="text-gray-400">{experimentStatusLabels[experiment.status]}</span>
+        <span className={`flex items-center gap-1 font-medium ${recommendationColor}`}>
+          <RecommendationIcon className="h-3 w-3" />
+          {recommendationLabels[experiment.recommendation]}
+        </span>
+      </div>
+
+      {experiment.status !== 'not_applicable' && (
+        <>
+          <div className="grid grid-cols-2 gap-3 text-[10px] text-gray-500">
+            <div className="min-w-0">
+              <div className="mb-1 flex justify-between gap-2 tabular-nums">
+                <span>终态运行</span>
+                <span>{experiment.readiness.terminal_run_count}/{experiment.readiness.minimum_terminal_runs}</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-sm bg-gray-200 dark:bg-gray-700">
+                <div className="h-full bg-blue-600" style={{ width: `${runProgress}%` }} />
+              </div>
+            </div>
+            <div className="min-w-0">
+              <div className="mb-1 flex justify-between gap-2 tabular-nums">
+                <span>质量反馈</span>
+                <span>{experiment.readiness.rated_run_count}/{experiment.readiness.minimum_rated_runs}</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-sm bg-gray-200 dark:bg-gray-700">
+                <div className="h-full bg-teal-600" style={{ width: `${feedbackProgress}%` }} />
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-gray-400">
+            <span>成功率 {formatDelta(experiment.comparison.operational_success_rate_delta)}</span>
+            <span>平均耗时 {formatDelta(experiment.comparison.average_duration_ms_delta, 'ms')}</span>
+            <span>工具失败 {formatDelta(experiment.comparison.tool_failure_rate_delta)}</span>
+            <span>满意度 {formatDelta(experiment.comparison.user_satisfaction_rate_delta)}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 interface RoutingPolicyEvaluationPanelProps {
@@ -95,6 +198,8 @@ export function RoutingPolicyEvaluationPanel({
           </tbody>
         </table>
       </div>
+
+      <ExperimentSummary experiment={evaluation.experiment} />
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-gray-500">
         <span className="font-medium text-gray-600 dark:text-gray-300">

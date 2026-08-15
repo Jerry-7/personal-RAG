@@ -71,5 +71,30 @@ export interface RoutingPolicySimulation {
 export interface RoutingPolicyEvaluation {
   current_policy: RoutingPolicyVersion;
   observed_versions: RoutingPolicyObservedVersion[];
+  experiment: RoutingPolicyExperiment;
   simulation: RoutingPolicySimulation;
+}
+
+export interface RoutingPolicyExperiment {
+  status: 'not_applicable' | 'collecting' | 'awaiting_feedback' | 'operational_alert' | 'ready';
+  current_policy_version: number;
+  baseline_policy_version: number | null;
+  readiness: {
+    minimum_terminal_runs: number;
+    minimum_rated_runs: number;
+    terminal_run_count: number;
+    rated_run_count: number;
+    operational_ready: boolean;
+    feedback_ready: boolean;
+  };
+  comparison: {
+    available: boolean;
+    operational_success_rate_delta: number | null;
+    average_duration_ms_delta: number | null;
+    tool_failure_rate_delta: number | null;
+    tool_budget_utilization_delta: number | null;
+    user_satisfaction_rate_delta: number | null;
+  };
+  recommendation: 'not_applicable' | 'collect_runs' | 'collect_feedback' | 'rollback' | 'keep' | 'review';
+  reason_codes: string[];
 }
