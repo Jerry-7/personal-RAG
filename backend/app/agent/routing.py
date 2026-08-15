@@ -96,6 +96,12 @@ class AgentRegistry:
             raise LookupError(f"No Agent registered for tier: {decision.tier}")
         return candidates[0]
 
+    def for_role(self, role: str) -> AgentProfile:
+        candidates = [profile for profile in self._profiles.values() if profile.role == role]
+        if not candidates:
+            raise LookupError(f"No Agent registered for role: {role}")
+        return candidates[0]
+
 
 class ComplexityRouter:
     """Classify a request into a bounded Agent tier.
@@ -151,9 +157,8 @@ class ComplexityRouter:
             score = max(0, score - 1)
             reasons.append("simple_fact_intent")
 
-        # Explicit web mode requires tool access, which the fast profile does
-        # not have.  Keep this as a hard routing constraint rather than a soft
-        # semantic signal.
+        # Explicit web mode requires a research-capable execution path.  Keep
+        # this as a hard routing constraint rather than a soft semantic signal.
         if mode == "web" and score < 2:
             score = 2
             reasons.append("tool_access_required")
@@ -219,6 +224,36 @@ def build_default_agent_registry() -> AgentRegistry:
             tool_call_budget=10,
             max_children=4,
             max_depth=2,
+            allowed_tool_sources=frozenset({"builtin", "skill", "web"}),
+            model_key="expert",
+        ),
+        AgentProfile(
+            name="local_retriever",
+            tier="standard",
+            role="retriever",
+            capabilities=frozenset({"local_retrieval", "tool_calling"}),
+            max_iterations=3,
+            tool_call_budget=4,
+            allowed_tool_sources=frozenset({"builtin", "skill", "web"}),
+            model_key="standard",
+        ),
+        AgentProfile(
+            name="web_researcher",
+            tier="standard",
+            role="web_researcher",
+            capabilities=frozenset({"web_research", "tool_calling"}),
+            max_iterations=4,
+            tool_call_budget=6,
+            allowed_tool_sources=frozenset({"builtin", "skill", "web"}),
+            model_key="standard",
+        ),
+        AgentProfile(
+            name="expert_synthesizer",
+            tier="expert",
+            role="synthesizer",
+            capabilities=frozenset({"evidence_synthesis", "tool_calling"}),
+            max_iterations=3,
+            tool_call_budget=3,
             allowed_tool_sources=frozenset({"builtin", "skill", "web"}),
             model_key="expert",
         ),

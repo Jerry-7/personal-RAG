@@ -29,6 +29,17 @@ const reasonLabels: Record<string, string> = {
   tool_access_required: '需要工具',
 };
 
+function goalDepth(goalId: string, goals: Array<{ id: string; parent_id: string | null }>): number {
+  const byId = new Map(goals.map((goal) => [goal.id, goal]));
+  let depth = 0;
+  let current = byId.get(goalId);
+  while (current?.parent_id && depth < 8) {
+    depth += 1;
+    current = byId.get(current.parent_id);
+  }
+  return depth;
+}
+
 export function ActivityTimeline() {
   const [expanded, setExpanded] = useState(false);
   const steps = useChatStore((state) => state.agentSteps);
@@ -46,7 +57,11 @@ export function ActivityTimeline() {
       </button>
       {expanded && <div className="space-y-2 pb-2">
         {goalNodes.map((goal) => (
-          <div key={goal.id} className={`${goal.parent_id ? 'ml-4' : ''} text-xs text-gray-600 dark:text-gray-400`}>
+          <div
+            key={goal.id}
+            className="text-xs text-gray-600 dark:text-gray-400"
+            style={{ paddingLeft: `${goalDepth(goal.id, goalNodes) * 16}px` }}
+          >
             <div className="flex items-center gap-2">
               {goal.kind === 'agent' ? <Bot className="h-3.5 w-3.5" /> : <Target className="h-3.5 w-3.5" />}
               <span className="flex-1 truncate" title={goal.title}>{goal.title}</span>

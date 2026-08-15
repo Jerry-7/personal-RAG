@@ -152,6 +152,7 @@ async def _agent_event_generator(
     from app.agent.loop import AgentLoop
     from app.agent.context import AgentRunContext
     from app.agent.routing import ComplexityRouter, build_default_agent_registry
+    from app.agent.supervisor import Supervisor
     from app.services.generator import generator as gen_service
     from app.services.goal_runtime import GoalRuntime, serialize_event
 
@@ -161,7 +162,8 @@ async def _agent_event_generator(
         mode=mode,
         history=chat_history,
     )
-    agent_profile = build_default_agent_registry().for_decision(route_decision)
+    agent_registry = build_default_agent_registry()
+    agent_profile = agent_registry.for_decision(route_decision)
     # 构建数据库AgentRun对象
     agent_run = AgentRun(
         conversation_id=conversation_id,
@@ -251,12 +253,28 @@ async def _agent_event_generator(
                 "data": json.dumps(serialize_event(goal_event), ensure_ascii=False),
             }
 
-        async for event in agent.run(
-            question=question,
-            conversation_id=conversation_id,
-            chat_history=chat_history,
-            context=run_context,
-        ):
+        if route_decision.requires_decomposition:
+            supervisor = Supervisor(
+                provider=llm_provider,
+                registry=agent_registry,
+                goal_runtime=goal_runtime,
+                parent_goal=agent_goal,
+                context=run_context,
+            )
+            execution_stream = supervisor.run(
+                question=question,
+                mode=mode,
+                chat_history=chat_history,
+            )
+        else:
+            execution_stream = agent.run(
+                question=question,
+                conversation_id=conversation_id,
+                chat_history=chat_history,
+                context=run_context,
+            )
+
+        async for event in execution_stream:
             evt_type = event.get("event", "")
             data = event.get("data", "")
 
@@ -311,6 +329,7 @@ async def _agent_event_generator(
                 run_error_message = str(data.get("message", "Agent 执行失败")) if isinstance(data, dict) else str(data)
                 yield {"event": "error", "data": json.dumps(data)}
                 # 错误发生后仍尝试保存已有内容
+                continue
 
             elif evt_type == "max_iterations":
                 logger.warning("Agent reached max iterations for conv %s", conversation_id)

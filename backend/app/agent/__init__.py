@@ -17,6 +17,7 @@ from app.agent.routing import (
     RouteDecision,
     build_default_agent_registry,
 )
+from app.agent.supervisor import Supervisor
 from app.agent import builtin_tools  # noqa: F401 — 注册内置工具
 from app.agent import research_tools  # noqa: F401 — 注册联网研究工具
 from app.agent import note_tools  # noqa: F401 — 注册笔记草稿工具
@@ -27,6 +28,7 @@ __all__ = [
     "AgentRegistry",
     "ComplexityRouter",
     "RouteDecision",
+    "Supervisor",
     "ToolRegistry",
     "build_default_agent_registry",
     "tool_registry",
