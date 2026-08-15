@@ -105,6 +105,7 @@ export interface RouteSelection {
   model_key?: string;
   model_uses_default?: boolean;
   tool_call_budget: number;
+  tool_repeat_limit: number;
   tier: 'fast' | 'standard' | 'expert';
   route: 'direct' | 'tool_agent' | 'supervisor';
   score: number;
@@ -137,6 +138,7 @@ export interface GoalNodeData {
   model_provider: string;
   model_name: string;
   tool_call_budget: number;
+  tool_repeat_limit: number;
   sequence: number;
   attempt: number;
   max_attempts: number;
@@ -173,6 +175,8 @@ export interface RunMetrics {
   tool_calls_failed: number;
   tool_duration_ms: number;
   tool_call_budget: number;
+  tool_repeat_peak: number;
+  tool_repeat_overrun_count: number;
   web_pages_used: number;
   web_page_budget: number;
   context_compressions: number;
@@ -254,6 +258,8 @@ export interface RoutingAnalyticsMetrics {
   tool_failure_rate: number;
   tool_call_budget: number;
   tool_budget_utilization: number;
+  tool_repeat_overrun_run_count: number;
+  tool_repeat_overrun_rate: number;
   rated_run_count: number;
   positive_feedback_count: number;
   negative_feedback_count: number;

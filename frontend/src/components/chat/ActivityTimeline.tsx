@@ -297,7 +297,7 @@ function GoalBranch({ goal, goals, steps, compact = false }: GoalBranchProps) {
         )}
         {goal.tool_call_budget > 0 && (
           <span className="shrink-0 tabular-nums text-[10px] text-gray-400">
-            工具 {goalSteps.length}/{goal.tool_call_budget}
+            工具 {goalSteps.length}/{goal.tool_call_budget} · 单工具建议 ≤ {goal.tool_repeat_limit}
           </span>
         )}
         {goal.attempt > 1 && (
@@ -528,6 +528,21 @@ export function ActivityTimeline() {
                     <Wrench className="h-3 w-3" />
                     {runSnapshot.metrics.tool_calls_used}/{runSnapshot.metrics.tool_call_budget}
                   </span>
+                  {runSnapshot.metrics.tool_repeat_peak > 0 && (
+                    <span
+                      className={`flex items-center gap-1 tabular-nums ${
+                        runSnapshot.metrics.tool_repeat_overrun_count > 0
+                          ? 'text-amber-600 dark:text-amber-400'
+                          : 'text-gray-400'
+                      }`}
+                      title="同一工具在单个 Agent 目标内的最大重复次数，以及超过 Prompt 建议上限的次数"
+                    >
+                      <Wrench className="h-3 w-3" />
+                      重复峰值 {runSnapshot.metrics.tool_repeat_peak}
+                      {runSnapshot.metrics.tool_repeat_overrun_count > 0
+                        && ` · 超建议 ${runSnapshot.metrics.tool_repeat_overrun_count}`}
+                    </span>
+                  )}
                   <span className="flex items-center gap-1 tabular-nums">
                     <Globe2 className="h-3 w-3" />
                     {runSnapshot.metrics.web_pages_used}/{runSnapshot.metrics.web_page_budget}
@@ -628,6 +643,14 @@ export function ActivityTimeline() {
               <span className="shrink-0 tabular-nums">
                 预算 {routingAnalytics.summary.tool_budget_utilization}%
               </span>
+              {routingAnalytics.summary.tool_repeat_overrun_run_count > 0 && (
+                <span
+                  className="shrink-0 tabular-nums text-amber-600 dark:text-amber-400"
+                  title="运行中同一工具重复次数超过对应 Agent Prompt 建议上限的比例"
+                >
+                  频控超建议 {routingAnalytics.summary.tool_repeat_overrun_rate}%
+                </span>
+              )}
               <span className="shrink-0 tabular-nums">
                 路由置信 {Math.round(routingAnalytics.summary.average_route_confidence * 100)}%
               </span>
@@ -758,7 +781,7 @@ export function ActivityTimeline() {
                   {tierLabels[routeSelection.tier]} · {routeLabels[routeSelection.route]}
                 </span>
                 <span className="shrink-0 tabular-nums text-[10px] text-gray-400">
-                  策略 v{routeSelection.policy_version} · 评分 {routeSelection.score} · 工具 ≤ {routeSelection.tool_call_budget}
+                  策略 v{routeSelection.policy_version} · 评分 {routeSelection.score} · 工具 ≤ {routeSelection.tool_call_budget} · 单工具 ≤ {routeSelection.tool_repeat_limit}
                 </span>
                 {routeSelection.model_name && (
                   <span
