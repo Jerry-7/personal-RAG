@@ -1,8 +1,7 @@
-"""Task complexity routing and Agent capability registration.
+"""Task complexity routing and executable Agent capability registration.
 
-The router is intentionally side-effect free.  It produces a validated
-decision that a future supervisor/orchestrator can execute without coupling
-complexity detection to the existing ReAct ``AgentLoop``.
+The deterministic router remains side-effect free. Its validated decision is
+consumed by the adaptive classifier gate and the Supervisor orchestration path.
 """
 
 from __future__ import annotations
@@ -338,7 +337,7 @@ class ComplexityRouter:
 
 
 def build_default_agent_registry() -> AgentRegistry:
-    """Create the initial role registry used by the future supervisor."""
+    """Create the role registry used by direct and Supervisor execution."""
     return AgentRegistry([
         AgentProfile(
             name="fast_general",
