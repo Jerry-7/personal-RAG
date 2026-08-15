@@ -11,8 +11,9 @@ import {
   GitFork,
   GitMerge,
   Globe2,
-  Loader2,
   History,
+  Loader2,
+  Lightbulb,
   Pause,
   Play,
   Route,
@@ -30,7 +31,12 @@ import { useChatStore } from '../../store/chatStore';
 import { pauseChatExecution, resumeChatExecution, retryChatRun } from '../../services/chatExecution';
 import { loadRunSnapshot } from '../../services/runHistory';
 import { removeRunFeedback, saveRunFeedback } from '../../services/runFeedback';
-import type { AgentRunFeedbackReason, AgentStep, GoalNodeData } from '../../types/chat';
+import type {
+  AgentRunFeedbackReason,
+  AgentStep,
+  GoalNodeData,
+  RoutingRecommendationAction,
+} from '../../types/chat';
 
 const toolLabels: Record<string, string> = {
   web_search: '搜索网页',
@@ -82,6 +88,31 @@ const feedbackReasonLabels: Record<AgentRunFeedbackReason, string> = {
   too_slow: '执行过慢',
   over_complicated: '过度复杂',
 };
+
+const recommendationLabels: Record<RoutingRecommendationAction, string> = {
+  upgrade_tier: '升级 Agent 等级',
+  downgrade_tier: '试用较低等级',
+  investigate_reliability: '检查运行可靠性',
+  review_planning: '检查目标规划',
+  investigate_quality: '检查回答质量',
+  optimize_latency: '优化执行耗时',
+  simplify_route: '简化执行路径',
+  keep_policy: '保持当前策略',
+};
+
+const recommendationReasonLabels: Record<string, string> = {
+  low_operational_success: '运行成功率偏低',
+  high_tool_failure: '工具失败率偏高',
+  low_user_satisfaction: '用户满意率偏低',
+  missing_evidence: '证据不足',
+  incorrect: '内容不正确',
+  too_slow: '执行过慢',
+  over_complicated: '过度复杂',
+  high_quality_low_utilization: '质量稳定且预算利用率低',
+  stable_policy: '当前策略稳定',
+};
+
+const confidenceLabels = { low: '低置信', medium: '中置信', high: '高置信' } as const;
 
 function formatDuration(durationMs: number | null): string {
   if (durationMs === null) return '--';
@@ -541,6 +572,55 @@ export function ActivityTimeline() {
                 })}
               </div>
             </div>
+          )}
+          {routingAnalytics && (
+            routingAnalytics.recommendation_report.items.length > 0 ? (
+              <div className="space-y-1 text-[10px] text-gray-400">
+                {routingAnalytics.recommendation_report.items.slice(0, 3).map((item) => (
+                  <div
+                    key={`${item.tier}-${item.route}-${item.planning_source}`}
+                    className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5"
+                  >
+                    <Lightbulb className={`h-3.5 w-3.5 shrink-0 ${
+                      item.action === 'keep_policy'
+                        ? 'text-green-600'
+                        : item.action === 'investigate_reliability'
+                          ? 'text-red-500'
+                          : 'text-amber-500'
+                    }`} />
+                    <span className="font-medium text-gray-600 dark:text-gray-300">
+                      {tierLabels[item.tier]} · {recommendationLabels[item.action]}
+                    </span>
+                    <span>{confidenceLabels[item.confidence]}</span>
+                    <span>
+                      {item.reason_codes.map((reason) => recommendationReasonLabels[reason] || reason).join(' · ')}
+                    </span>
+                    <span className="tabular-nums">
+                      成功 {item.evidence.operational_success_rate}%
+                      {item.evidence.rated_run_count > 0 && ` · 满意 ${item.evidence.user_satisfaction_rate}%`}
+                    </span>
+                  </div>
+                ))}
+                {routingAnalytics.recommendation_report.items.length > 3 && (
+                  <p className="ml-5">另有 {routingAnalytics.recommendation_report.items.length - 3} 条建议</p>
+                )}
+                {!routingAnalytics.recommendation_report.readiness.feedback_ready && (
+                  <p className="ml-5 tabular-nums">
+                    质量建议样本 {routingAnalytics.recommendation_report.readiness.rated_run_count}/{routingAnalytics.recommendation_report.readiness.minimum_rated_runs}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 text-[10px] text-gray-400">
+                <Lightbulb className="h-3.5 w-3.5 shrink-0" />
+                <span className="tabular-nums">
+                  运行样本 {routingAnalytics.recommendation_report.readiness.terminal_run_count}/{routingAnalytics.recommendation_report.readiness.minimum_terminal_runs}
+                </span>
+                <span className="tabular-nums">
+                  反馈样本 {routingAnalytics.recommendation_report.readiness.rated_run_count}/{routingAnalytics.recommendation_report.readiness.minimum_rated_runs}
+                </span>
+              </div>
+            )
           )}
           {runSnapshot?.error_message && (
             <p className="text-[10px] leading-4 text-red-500">

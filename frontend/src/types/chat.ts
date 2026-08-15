@@ -249,12 +249,52 @@ export interface RoutingAnalyticsGroup extends RoutingAnalyticsMetrics {
   planning_source: 'model' | 'fallback' | 'mixed' | 'not_applicable';
 }
 
+export type RoutingRecommendationAction =
+  | 'upgrade_tier'
+  | 'downgrade_tier'
+  | 'investigate_reliability'
+  | 'review_planning'
+  | 'investigate_quality'
+  | 'optimize_latency'
+  | 'simplify_route'
+  | 'keep_policy';
+
+export interface RoutingRecommendation {
+  tier: 'fast' | 'standard' | 'expert';
+  route: 'direct' | 'tool_agent' | 'supervisor';
+  planning_source: 'model' | 'fallback' | 'mixed' | 'not_applicable';
+  action: RoutingRecommendationAction;
+  confidence: 'low' | 'medium' | 'high';
+  reason_codes: string[];
+  evidence: {
+    terminal_run_count: number;
+    rated_run_count: number;
+    operational_success_rate: number;
+    user_satisfaction_rate: number;
+    tool_failure_rate: number;
+    tool_budget_utilization: number;
+  };
+}
+
+export interface RoutingRecommendationReport {
+  readiness: {
+    minimum_terminal_runs: number;
+    minimum_rated_runs: number;
+    terminal_run_count: number;
+    rated_run_count: number;
+    operational_ready: boolean;
+    feedback_ready: boolean;
+  };
+  items: RoutingRecommendation[];
+}
+
 export interface RoutingAnalytics {
   summary: RoutingAnalyticsMetrics & {
     tier_counts: Record<'fast' | 'standard' | 'expert', number>;
     planning_source_counts: Record<string, number>;
   };
   groups: RoutingAnalyticsGroup[];
+  recommendation_report: RoutingRecommendationReport;
 }
 
 export interface ConversationSummary {
