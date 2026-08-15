@@ -227,6 +227,7 @@ async def _agent_event_generator(
         title=question,
         agent_profile=agent_profile.name,
         input_data={"question": question, "mode": mode},
+        tool_call_budget=0,
     )
     agent_goal, agent_goal_events = goal_runtime.create_child(
         parent=root_goal,
@@ -234,6 +235,7 @@ async def _agent_event_generator(
         kind="agent",
         agent_profile=agent_profile.name,
         input_data={"question": question, "route": route_decision.route},
+        tool_call_budget=agent_profile.tool_call_budget,
     )
     initial_goal_events.extend(agent_goal_events)
     # 构建上下文

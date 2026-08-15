@@ -32,6 +32,7 @@ def serialize_goal(node: GoalNode) -> dict[str, Any]:
         "kind": node.kind,
         "status": node.status,
         "agent_profile": node.agent_profile,
+        "tool_call_budget": node.tool_call_budget,
         "sequence": node.sequence,
         "attempt": node.attempt,
         "max_attempts": node.max_attempts,
@@ -79,6 +80,7 @@ class GoalRuntime:
         title: str,
         agent_profile: str,
         input_data: dict[str, Any],
+        tool_call_budget: int = 0,
     ) -> tuple[GoalNode, list[RunEvent]]:
         node = GoalNode(
             run_id=self.run_id,
@@ -86,6 +88,7 @@ class GoalRuntime:
             kind="root",
             status="pending",
             agent_profile=agent_profile,
+            tool_call_budget=tool_call_budget,
             sequence=0,
             input_json=json.dumps(input_data, ensure_ascii=False),
         )
@@ -106,6 +109,7 @@ class GoalRuntime:
         input_data: dict[str, Any],
         dependencies: list[str] | None = None,
         max_attempts: int = 1,
+        tool_call_budget: int = 0,
     ) -> tuple[GoalNode, list[RunEvent]]:
         if parent.run_id != self.run_id:
             raise ValueError("Parent goal belongs to a different run")
@@ -119,6 +123,7 @@ class GoalRuntime:
             kind=kind,
             status="pending",
             agent_profile=agent_profile,
+            tool_call_budget=tool_call_budget,
             sequence=self._node_sequence,
             attempt=1,
             max_attempts=max_attempts,

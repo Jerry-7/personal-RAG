@@ -102,6 +102,7 @@ class Supervisor:
                     agent_profile=profile.name,
                     input_data={"question": question, "mode": spec.mode, "role": spec.role},
                     max_attempts=profile.max_attempts,
+                    tool_call_budget=profile.tool_call_budget,
                 )
                 worker_goal_ids.append(goal.id)
                 worker_entries.append((spec, profile, goal))
@@ -189,6 +190,7 @@ class Supervisor:
                 agent_profile=synth_profile.name,
                 input_data={"question": question, "role": "synthesizer"},
                 dependencies=worker_goal_ids,
+                tool_call_budget=synth_profile.tool_call_budget,
             )
             for event in synth_events:
                 yield self._event(event)

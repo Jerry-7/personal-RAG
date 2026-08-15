@@ -274,6 +274,7 @@ class GoalNode(Base):
     kind: Mapped[str] = mapped_column(String(32), nullable=False, default="root")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
     agent_profile: Mapped[str] = mapped_column(String(64), nullable=False, default="standard_research")
+    tool_call_budget: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

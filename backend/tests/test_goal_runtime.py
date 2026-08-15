@@ -64,10 +64,12 @@ class GoalRuntimeTests(unittest.TestCase):
             kind="agent",
             agent_profile="standard_research",
             input_data={"route": "tool_agent"},
+            tool_call_budget=5,
         )
 
         self.assertEqual(child.parent_id, root.id)
         self.assertEqual(child.status, "running")
+        self.assertEqual(serialize_goal(child)["tool_call_budget"], 5)
         self.assertEqual([event.sequence for event in events], [3, 4])
         with self.assertRaises(ValueError):
             runtime.create_child(
@@ -135,4 +137,37 @@ class GoalRuntimeTests(unittest.TestCase):
                 "SELECT attempt, max_attempts FROM goal_nodes WHERE id = 'goal'"
             )).one()
             self.assertEqual(tuple(row), (1, 1))
+        engine.dispose()
+
+    def test_tool_budget_migration_upgrades_legacy_goal_table(self):
+        engine = create_engine("sqlite:///:memory:")
+        migration_path = (
+            Path(__file__).parents[1]
+            / "alembic"
+            / "versions"
+            / "20260815_03_goal_tool_budgets.py"
+        )
+        spec = importlib.util.spec_from_file_location("goal_budget_migration", migration_path)
+        assert spec and spec.loader
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE goal_nodes ("
+                "id VARCHAR(36) PRIMARY KEY, kind VARCHAR(32), agent_profile VARCHAR(64))"
+            ))
+            connection.execute(text(
+                "INSERT INTO goal_nodes (id, kind, agent_profile) "
+                "VALUES ('goal', 'agent', 'web_researcher')"
+            ))
+            migration.op = Operations(MigrationContext.configure(connection))
+            migration.upgrade()
+            migration.upgrade()
+            columns = {column["name"] for column in inspect(connection).get_columns("goal_nodes")}
+            self.assertIn("tool_call_budget", columns)
+            budget = connection.execute(text(
+                "SELECT tool_call_budget FROM goal_nodes WHERE id = 'goal'"
+            )).scalar_one()
+            self.assertEqual(budget, 6)
         engine.dispose()
