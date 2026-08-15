@@ -359,6 +359,9 @@ class RunReplayGeneratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(retried_run.route_tier_preference, "fast")
         self.assertEqual(retried_run.route_max_children, 0)
         self.assertEqual(retried_run.route_max_depth, 0)
+        self.assertEqual(retried_run.route_decision_source, "manual")
+        self.assertEqual(retried_run.route_confidence, 1.0)
+        self.assertEqual(retried_run.route_classifier_calls, 0)
         self.assertEqual(provider.model, "fast-replay-model")
         self.assertEqual(len(user_messages), 1)
         self.assertTrue(any(event["event"] == "done" for event in events))
@@ -367,3 +370,7 @@ class RunReplayGeneratorTests(unittest.IsolatedAsyncioTestCase):
             json.loads(run_started["data"])["retry_of_run_id"],
             self.source_run.id,
         )
+        route_selected = next(
+            event for event in events if event["event"] == "route_selected"
+        )
+        self.assertEqual(json.loads(route_selected["data"])["decision_source"], "manual")

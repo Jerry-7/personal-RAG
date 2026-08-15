@@ -47,6 +47,12 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
             route_name="supervisor",
             route_score=6,
             route_reasons_json='["complex_intent"]',
+            route_decision_source="model",
+            route_confidence=0.86,
+            route_classifier_model="fast-model",
+            route_classifier_original_tokens=2400,
+            route_classifier_compressed_tokens=1200,
+            route_classifier_calls=2,
             route_requires_decomposition=True,
             route_max_children=4,
             route_max_depth=2,
@@ -160,6 +166,12 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source_summary["routing"]["route"], "supervisor")
         self.assertEqual(source_summary["routing"]["max_children"], 4)
         self.assertEqual(source_summary["routing"]["max_depth"], 2)
+        self.assertEqual(source_summary["routing"]["decision_source"], "model")
+        self.assertEqual(source_summary["routing"]["confidence"], 0.86)
+        self.assertEqual(source_summary["routing"]["classifier_model"], "fast-model")
+        self.assertEqual(source_summary["routing"]["classifier_original_tokens"], 2400)
+        self.assertEqual(source_summary["routing"]["classifier_compressed_tokens"], 1200)
+        self.assertEqual(source_summary["routing"]["classifier_calls"], 2)
         self.assertEqual(source_summary["routing"]["observed_max_children"], 1)
         self.assertEqual(source_summary["routing"]["observed_max_depth"], 1)
         self.assertEqual(source_summary["model_name"], "expert-model")
@@ -196,6 +208,14 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
             "standard": 1,
             "expert": 1,
         })
+        self.assertEqual(summary["decision_source_counts"], {
+            "heuristic": 1,
+            "model": 1,
+        })
+        self.assertEqual(summary["average_route_confidence"], 0.93)
+        self.assertEqual(summary["classifier_call_count"], 2)
+        self.assertEqual(summary["model_routed_run_count"], 1)
+        self.assertEqual(summary["classifier_fallback_count"], 0)
         expert = next(group for group in analytics["groups"] if group["tier"] == "expert")
         self.assertEqual(expert["route"], "supervisor")
         self.assertEqual(expert["planning_source"], "model")
@@ -401,4 +421,51 @@ class AgentRunFeedbackMigrationTests(unittest.TestCase):
                 {column["name"] for column in inspect(connection).get_columns("agent_run_feedback")},
                 {"run_id", "rating", "reason", "created_at", "updated_at"},
             )
+        engine.dispose()
+
+
+class RouteClassifierEvidenceMigrationTests(unittest.TestCase):
+    def test_classifier_evidence_migration_backfills_and_is_idempotent(self):
+        engine = create_engine("sqlite:///:memory:")
+        migration_path = (
+            Path(__file__).parents[1]
+            / "alembic"
+            / "versions"
+            / "20260815_10_route_classifier_evidence.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "route_classifier_evidence_migration", migration_path
+        )
+        assert spec and spec.loader
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE agent_runs ("
+                "id VARCHAR(36) PRIMARY KEY, route_tier_preference VARCHAR(16))"
+            ))
+            connection.execute(text(
+                "INSERT INTO agent_runs VALUES "
+                "('auto-run', 'auto'), ('manual-run', 'expert')"
+            ))
+            migration.op = Operations(MigrationContext.configure(connection))
+            migration.upgrade()
+            migration.upgrade()
+
+            evidence = connection.execute(text(
+                "SELECT id, route_decision_source, route_confidence, "
+                "route_classifier_model, route_classifier_original_tokens, "
+                "route_classifier_compressed_tokens, route_classifier_calls "
+                "FROM agent_runs ORDER BY id"
+            )).all()
+            self.assertEqual(evidence, [
+                ("auto-run", "heuristic", 1.0, "", 0, 0, 0),
+                ("manual-run", "manual", 1.0, "", 0, 0, 0),
+            ])
+            column_names = {
+                column["name"]
+                for column in inspect(connection).get_columns("agent_runs")
+            }
+            self.assertTrue({name for name, _, _ in migration._COLUMNS} <= column_names)
         engine.dispose()

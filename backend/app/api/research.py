@@ -169,6 +169,16 @@ def _routing(run: AgentRun, goals: list[GoalNode]) -> dict[str, Any]:
         "route": run.route_name,
         "score": run.route_score,
         "reasons": json.loads(run.route_reasons_json or "[]"),
+        "decision_source": getattr(run, "route_decision_source", "heuristic"),
+        "confidence": getattr(run, "route_confidence", 1.0),
+        "classifier_model": getattr(run, "route_classifier_model", ""),
+        "classifier_original_tokens": getattr(
+            run, "route_classifier_original_tokens", 0
+        ),
+        "classifier_compressed_tokens": getattr(
+            run, "route_classifier_compressed_tokens", 0
+        ),
+        "classifier_calls": getattr(run, "route_classifier_calls", 0),
         "requires_decomposition": run.route_requires_decomposition,
         "max_children": run.route_max_children,
         "max_depth": run.route_max_depth,

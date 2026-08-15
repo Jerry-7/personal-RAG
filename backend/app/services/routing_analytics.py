@@ -168,6 +168,22 @@ def build_routing_analytics(
     summary["planning_source_counts"] = dict(Counter(
         _planning_source(run, goals_by_run[run.id]) for run in runs
     ))
+    decision_sources = Counter(
+        getattr(run, "route_decision_source", "heuristic") or "heuristic"
+        for run in runs
+    )
+    summary["decision_source_counts"] = dict(decision_sources)
+    summary["average_route_confidence"] = round(
+        sum(float(getattr(run, "route_confidence", 1.0) or 0.0) for run in runs)
+        / len(runs),
+        3,
+    ) if runs else 0.0
+    summary["classifier_call_count"] = sum(
+        max(0, int(getattr(run, "route_classifier_calls", 0) or 0))
+        for run in runs
+    )
+    summary["model_routed_run_count"] = decision_sources["model"]
+    summary["classifier_fallback_count"] = decision_sources["heuristic_fallback"]
     analytics = {"summary": summary, "groups": groups}
     return {
         **analytics,

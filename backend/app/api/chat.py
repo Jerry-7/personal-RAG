@@ -195,7 +195,8 @@ async def _agent_event_generator(
     from app.agent.loop import AgentLoop
     from app.agent.context import AgentRunContext
     from app.agent.model_selection import select_agent_model
-    from app.agent.routing import ComplexityRouter, build_default_agent_registry
+    from app.agent.adaptive_routing import AdaptiveComplexityRouter
+    from app.agent.routing import build_default_agent_registry
     from app.agent.supervisor import Supervisor
     from app.services.generator import generator as gen_service
     from app.services.goal_runtime import GoalRuntime, serialize_event
@@ -206,14 +207,20 @@ async def _agent_event_generator(
     if pause_event is None:
         pause_event = _running_pause_event()
         _pause_flags[conversation_id] = pause_event
+    agent_registry = build_default_agent_registry()
+    routing_provider = await gen_service._get_provider()
     routing_policy = get_active_routing_policy(db)
-    route_decision = ComplexityRouter(routing_policy).route(
+    classifier_selection = select_agent_model(agent_registry.require("fast_general"))
+    route_decision = await AdaptiveComplexityRouter(
+        routing_policy,
+        routing_provider,
+        classifier_model=classifier_selection.model,
+    ).route(
         question,
         mode=mode,
         history=chat_history,
         tier_preference=tier_preference,
     )
-    agent_registry = build_default_agent_registry()
     agent_profile = agent_registry.for_decision(route_decision)
     model_selection = select_agent_model(agent_profile)
     # 构建数据库AgentRun对象
@@ -229,6 +236,12 @@ async def _agent_event_generator(
         route_name=route_decision.route,
         route_score=route_decision.score,
         route_reasons_json=json.dumps(route_decision.reasons),
+        route_decision_source=route_decision.decision_source,
+        route_confidence=route_decision.confidence,
+        route_classifier_model=route_decision.classifier_model,
+        route_classifier_original_tokens=route_decision.classifier_original_tokens,
+        route_classifier_compressed_tokens=route_decision.classifier_compressed_tokens,
+        route_classifier_calls=route_decision.classifier_calls,
         route_requires_decomposition=route_decision.requires_decomposition,
         route_max_children=route_decision.max_children,
         route_max_depth=route_decision.max_depth,
@@ -275,7 +288,7 @@ async def _agent_event_generator(
     )
 
     # 创建 LLM provider
-    llm_provider = await gen_service._get_provider()
+    llm_provider = routing_provider
 
     # 创建 Agent 循环
     agent = AgentLoop(

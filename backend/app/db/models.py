@@ -268,6 +268,24 @@ class AgentRun(Base):
     route_name: Mapped[str] = mapped_column(String(32), nullable=False, default="tool_agent")
     route_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     route_reasons_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    route_decision_source: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="heuristic", server_default="heuristic"
+    )
+    route_confidence: Mapped[float] = mapped_column(
+        Float, nullable=False, default=1.0, server_default="1.0"
+    )
+    route_classifier_model: Mapped[str] = mapped_column(
+        String(256), nullable=False, default="", server_default=""
+    )
+    route_classifier_original_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    route_classifier_compressed_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    route_classifier_calls: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     route_requires_decomposition: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     route_max_children: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     route_max_depth: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
