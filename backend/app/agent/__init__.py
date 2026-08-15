@@ -10,6 +10,7 @@ Agent 模块
 
 from app.agent.tools import ToolRegistry, tool_registry
 from app.agent.loop import AgentLoop
+from app.agent.planning import SupervisorPlanner, WorkerPlan, WorkerSpec
 from app.agent.routing import (
     AgentProfile,
     AgentRegistry,
@@ -31,7 +32,10 @@ __all__ = [
     "ComplexityRouter",
     "RouteDecision",
     "Supervisor",
+    "SupervisorPlanner",
     "ToolRegistry",
+    "WorkerPlan",
+    "WorkerSpec",
     "build_default_agent_registry",
     "tool_registry",
 ]

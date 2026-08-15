@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     agent_input_rewrite_enabled: bool = True
     agent_input_max_chars: int = 12000
     agent_input_history_max_chars: int = 12000
+    agent_dynamic_planning_enabled: bool = True
     agent_fast_model: Optional[str] = None
     agent_standard_model: Optional[str] = None
     agent_expert_model: Optional[str] = None
