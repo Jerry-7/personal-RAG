@@ -1,4 +1,4 @@
-import { getResearchRun, listResearchRuns } from '../api/research';
+import { getResearchRun, getRoutingAnalytics, listResearchRuns } from '../api/research';
 import { useChatStore } from '../store/chatStore';
 
 export async function loadRunSnapshot(runId: string): Promise<void> {
@@ -12,10 +12,14 @@ export async function restoreConversationRuns(
   conversationId: string,
   preferredRunId?: string,
 ): Promise<void> {
-  const runs = await listResearchRuns(conversationId);
+  const [runs, analytics] = await Promise.all([
+    listResearchRuns(conversationId),
+    getRoutingAnalytics().catch(() => null),
+  ]);
   let state = useChatStore.getState();
   if (state.conversationId !== conversationId || state.isStreaming) return;
   state.setRunHistory(runs);
+  if (analytics) state.setRoutingAnalytics(analytics);
   const selected = runs.find((run) => run.id === preferredRunId) || runs[0];
   if (!selected) return;
   const snapshot = await getResearchRun(selected.id);

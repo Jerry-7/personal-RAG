@@ -5,7 +5,7 @@
  */
 
 import { create } from 'zustand';
-import type { AgentStep, CitationData, GoalNodeData, MessageItem, ResearchRunDetail, ResearchRunSummary, RouteSelection, RunEventData } from '../types/chat';
+import type { AgentStep, CitationData, GoalNodeData, MessageItem, ResearchRunDetail, ResearchRunSummary, RouteSelection, RoutingAnalytics, RunEventData } from '../types/chat';
 
 interface ChatState {
   /** 当前对话 ID */
@@ -25,6 +25,7 @@ interface ChatState {
   runId: string | null;
   runHistory: ResearchRunSummary[];
   runSnapshot: ResearchRunDetail | null;
+  routingAnalytics: RoutingAnalytics | null;
   routeSelection: RouteSelection | null;
   goalNodes: GoalNodeData[];
   runEvents: RunEventData[];
@@ -45,6 +46,7 @@ interface ChatState {
   setRunId: (id: string) => void;
   setRunHistory: (runs: ResearchRunSummary[]) => void;
   restoreRunSnapshot: (snapshot: ResearchRunDetail) => void;
+  setRoutingAnalytics: (analytics: RoutingAnalytics) => void;
   setPaused: (paused: boolean) => void;
   setRouteSelection: (selection: RouteSelection) => void;
   applyRunEvent: (event: RunEventData) => void;
@@ -63,6 +65,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   runId: null,
   runHistory: [],
   runSnapshot: null,
+  routingAnalytics: null,
   routeSelection: null,
   goalNodes: [],
   runEvents: [],
@@ -168,6 +171,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       timestamp: tool.created_at ? new Date(tool.created_at).getTime() : 0,
     })),
   }),
+  setRoutingAnalytics: (routingAnalytics) => set({ routingAnalytics }),
   setPaused: (paused) => set({ isPaused: paused }),
   setRouteSelection: (selection) => set({ routeSelection: selection }),
   applyRunEvent: (event) => set((state) => {

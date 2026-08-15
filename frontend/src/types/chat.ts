@@ -204,6 +204,40 @@ export interface ResearchRunDetail extends ResearchRunSummary {
   tools: PersistedToolExecution[];
 }
 
+export interface RoutingAnalyticsMetrics {
+  run_count: number;
+  terminal_run_count: number;
+  completed_run_count: number;
+  failed_run_count: number;
+  cancelled_run_count: number;
+  interrupted_run_count: number;
+  active_run_count: number;
+  operational_success_rate: number;
+  average_duration_ms: number | null;
+  retry_run_count: number;
+  retry_rate: number;
+  manual_override_count: number;
+  tool_call_count: number;
+  failed_tool_call_count: number;
+  tool_failure_rate: number;
+  tool_call_budget: number;
+  tool_budget_utilization: number;
+}
+
+export interface RoutingAnalyticsGroup extends RoutingAnalyticsMetrics {
+  tier: 'fast' | 'standard' | 'expert';
+  route: 'direct' | 'tool_agent' | 'supervisor';
+  planning_source: 'model' | 'fallback' | 'mixed' | 'not_applicable';
+}
+
+export interface RoutingAnalytics {
+  summary: RoutingAnalyticsMetrics & {
+    tier_counts: Record<'fast' | 'standard' | 'expert', number>;
+    planning_source_counts: Record<string, number>;
+  };
+  groups: RoutingAnalyticsGroup[];
+}
+
 export interface ConversationSummary {
   id: string;
   title: string;

@@ -1,4 +1,4 @@
-import type { ResearchRunDetail, ResearchRunSummary } from '../types/chat';
+import type { ResearchRunDetail, ResearchRunSummary, RoutingAnalytics } from '../types/chat';
 import client from './client';
 
 export async function listResearchRuns(conversationId: string): Promise<ResearchRunSummary[]> {
@@ -10,5 +10,12 @@ export async function listResearchRuns(conversationId: string): Promise<Research
 
 export async function getResearchRun(runId: string): Promise<ResearchRunDetail> {
   const { data } = await client.get<ResearchRunDetail>(`/research-runs/${runId}`);
+  return data;
+}
+
+export async function getRoutingAnalytics(limit = 200): Promise<RoutingAnalytics> {
+  const { data } = await client.get<RoutingAnalytics>('/research-runs/analytics', {
+    params: { limit },
+  });
   return data;
 }

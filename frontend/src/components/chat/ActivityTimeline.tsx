@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   Bot,
+  BarChart3,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -266,6 +267,7 @@ export function ActivityTimeline() {
   const runId = useChatStore((state) => state.runId);
   const runHistory = useChatStore((state) => state.runHistory);
   const runSnapshot = useChatStore((state) => state.runSnapshot);
+  const routingAnalytics = useChatStore((state) => state.routingAnalytics);
 
   if (!steps.length && !routeSelection && !goalNodes.length && !runSnapshot && !runHistory.length) return null;
 
@@ -399,6 +401,47 @@ export function ActivityTimeline() {
                   {runSnapshot.retry_count > 0 && <span>{runSnapshot.retry_count} 次后续重试</span>}
                 </>
               )}
+            </div>
+          )}
+          {routingAnalytics && routingAnalytics.summary.run_count > 0 && (
+            <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-gray-400">
+              <BarChart3 className="h-3.5 w-3.5 shrink-0" />
+              <span className="shrink-0">最近 {routingAnalytics.summary.run_count} 次</span>
+              <span
+                className={`shrink-0 font-medium ${
+                  routingAnalytics.summary.operational_success_rate >= 90
+                    ? 'text-green-600 dark:text-green-500'
+                    : routingAnalytics.summary.operational_success_rate >= 60
+                      ? 'text-amber-600 dark:text-amber-500'
+                      : 'text-red-500'
+                }`}
+                title="终态运行的执行成功率，不代表回答质量"
+              >
+                执行成功 {routingAnalytics.summary.operational_success_rate}%
+              </span>
+              <span className="shrink-0 tabular-nums">
+                平均 {formatDuration(routingAnalytics.summary.average_duration_ms)}
+              </span>
+              <span className="shrink-0 tabular-nums">
+                预算 {routingAnalytics.summary.tool_budget_utilization}%
+              </span>
+              {routingAnalytics.summary.retry_run_count > 0 && (
+                <span className="shrink-0 tabular-nums">重试 {routingAnalytics.summary.retry_rate}%</span>
+              )}
+              <div className="flex h-1.5 min-w-16 flex-1 overflow-hidden rounded-sm bg-gray-200 dark:bg-gray-700" aria-label="Agent 等级样本分布">
+                {(['fast', 'standard', 'expert'] as const).map((tier) => {
+                  const count = routingAnalytics.summary.tier_counts[tier];
+                  if (!count) return null;
+                  return (
+                    <span
+                      key={tier}
+                      title={`${tierLabels[tier]} ${count}`}
+                      className={tier === 'fast' ? 'bg-emerald-500' : tier === 'standard' ? 'bg-blue-500' : 'bg-amber-500'}
+                      style={{ width: `${count * 100 / routingAnalytics.summary.run_count}%` }}
+                    />
+                  );
+                })}
+              </div>
             </div>
           )}
           {runSnapshot?.error_message && (
