@@ -11,28 +11,16 @@ import { Send, Square } from 'lucide-react';
 import type { ChatMode } from '../../types/chat';
 import { useChatStore } from '../../store/chatStore';
 import { useDocumentStore } from '../../store/documentStore';
-import { cancelChat, streamChatQuery } from '../../api/chat';
-import { useSidebarStore } from '../../store/sidebarStore';
 import { useNoteStore } from '../../store/noteStore';
+import { startChatQuery, stopChatExecution } from '../../services/chatExecution';
 
 export function ChatInput() {
   const [input, setInput] = useState('');
-  const [isSending, setIsSending] = useState(false);
   const [mode, setMode] = useState<ChatMode>('auto');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
 
-  const addUserMessage = useChatStore((s) => s.addUserMessage);
-  const startStreaming = useChatStore((s) => s.startStreaming);
-  const appendToken = useChatStore((s) => s.appendToken);
-  const finishStreaming = useChatStore((s) => s.finishStreaming);
-  const setConversationId = useChatStore((s) => s.setConversationId);
   const conversationId = useChatStore((s) => s.conversationId);
-  const setRunId = useChatStore((s) => s.setRunId);
-  const setRouteSelection = useChatStore((s) => s.setRouteSelection);
-  const applyRunEvent = useChatStore((s) => s.applyRunEvent);
-  const addToolCall = useChatStore((s) => s.addToolCall);
-  const finishToolCall = useChatStore((s) => s.finishToolCall);
+  const isStreaming = useChatStore((s) => s.isStreaming);
   const isLoadingHistory = useChatStore((s) => s.isLoadingHistory);
   const documents = useDocumentStore((s) => s.documents);
   const indexedCount = documents.filter((d) => d.status === 'indexed').length;
@@ -41,49 +29,11 @@ export function ChatInput() {
 
   const handleSend = useCallback(() => {
     const text = input.trim();
-    if (!text || isSending || isLoadingHistory) return;
+    if (!text || isStreaming || isLoadingHistory) return;
 
-    addUserMessage(text);
     setInput('');
-    setIsSending(true);
-    startStreaming();
-
-    // 发起 SSE 流式请求
-    abortRef.current = streamChatQuery(text, conversationId, mode, {
-      onToken: appendToken,
-      onCitation: (_index) => {
-        // [N] 标记已由后端作为 token 事件发送（含 "[1]" 文本），
-        // 前端 appendToken 自动将其追加到 streamingText，无需额外处理
-      },
-      onDone: (data) => {
-        // 首次对话时记录 conversation_id，后续消息才能归属到同一对话
-        if (!conversationId && data.conversation_id) {
-          setConversationId(data.conversation_id);
-        }
-        finishStreaming(data.citations, data.message_id);
-        setIsSending(false);
-      },
-      onError: (error) => {
-        console.error('Chat error:', error);
-        if (!useChatStore.getState().isStreaming) return;
-        appendToken(`生成失败：${error}`);
-        finishStreaming([], crypto.randomUUID());
-        setIsSending(false);
-      },
-      onRunStarted: (runId, serverConversationId) => {
-        setRunId(runId);
-        if (serverConversationId) setConversationId(serverConversationId);
-      },
-      onRouteSelected: setRouteSelection,
-      onGoalEvent: applyRunEvent,
-      onToolCall: addToolCall,
-      onToolResult: finishToolCall,
-      onNoteDraft: (note) => {
-        useNoteStore.getState().upsertNote(note);
-        useSidebarStore.getState().openDraft(note);
-      },
-    });
-  }, [input, isSending, isLoadingHistory, conversationId, mode, addUserMessage, startStreaming, appendToken, finishStreaming, setConversationId, setRunId, setRouteSelection, applyRunEvent, addToolCall, finishToolCall]);
+    startChatQuery(text, conversationId, mode);
+  }, [input, isStreaming, isLoadingHistory, conversationId, mode]);
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -93,17 +43,14 @@ export function ChatInput() {
   };
 
   const handleCancel = () => {
-    const currentConversationId = useChatStore.getState().conversationId;
-    if (currentConversationId) void cancelChat(currentConversationId);
-    abortRef.current?.abort();
-    setIsSending(false);
+    void stopChatExecution();
   };
 
   return (
     <div className="border-t border-gray-200 dark:border-gray-700 p-4">
       <div className="mx-auto mb-2 flex max-w-3xl items-center gap-1" role="group" aria-label="研究模式">
         {(['auto', 'local', 'web'] as ChatMode[]).map((item) => (
-          <button key={item} onClick={() => setMode(item)} className={`h-7 min-w-14 px-2 text-xs ${mode === item ? 'bg-gray-800 text-white dark:bg-gray-100 dark:text-gray-900' : 'border border-gray-200 text-gray-500 dark:border-gray-700'} ${item === 'auto' ? 'rounded-l' : item === 'web' ? 'rounded-r' : ''}`}>
+          <button key={item} onClick={() => setMode(item)} disabled={isStreaming} className={`h-7 min-w-14 px-2 text-xs disabled:opacity-50 ${mode === item ? 'bg-gray-800 text-white dark:bg-gray-100 dark:text-gray-900' : 'border border-gray-200 text-gray-500 dark:border-gray-700'} ${item === 'auto' ? 'rounded-l' : item === 'web' ? 'rounded-r' : ''}`}>
             {{ auto: '自动', local: '本地', web: '网页' }[item]}
           </button>
         ))}
@@ -125,7 +72,7 @@ export function ChatInput() {
           style={{ maxHeight: '120px' }}
         />
 
-        {isSending ? (
+        {isStreaming ? (
           <button
             onClick={handleCancel}
             title="停止生成"

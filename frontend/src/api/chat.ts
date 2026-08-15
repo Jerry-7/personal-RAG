@@ -47,16 +47,14 @@ export interface ChatStreamCallbacks {
  * @param callbacks 事件回调
  * @returns AbortController 用于取消请求
  */
-export function streamChatQuery(
-  question: string,
-  conversationId: string | null,
-  mode: ChatMode,
+function streamChatRequest(
+  body: Record<string, unknown>,
   callbacks: ChatStreamCallbacks
 ): AbortController {
   return streamSSE('/api/chat/query', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, conversation_id: conversationId, mode }),
+    body: JSON.stringify(body),
     onMessage: ({ event, data: rawData }) => {
       const data = rawData as Record<string, unknown>;
       switch (event) {
@@ -114,13 +112,35 @@ export function streamChatQuery(
   });
 }
 
+export function streamChatQuery(
+  question: string,
+  conversationId: string | null,
+  mode: ChatMode,
+  callbacks: ChatStreamCallbacks
+): AbortController {
+  return streamChatRequest(
+    { question, conversation_id: conversationId, mode },
+    callbacks
+  );
+}
+
+export function streamChatRetry(
+  runId: string,
+  callbacks: ChatStreamCallbacks
+): AbortController {
+  return streamChatRequest({ retry_run_id: runId }, callbacks);
+}
+
 /** 取消对话生成 */
 export async function cancelChat(conversationId: string): Promise<void> {
-  await fetch('/api/chat/cancel', {
+  const response = await fetch('/api/chat/cancel', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ conversation_id: conversationId }),
   });
+  if (!response.ok) throw new Error(`取消请求失败: ${response.status}`);
+  const result = await response.json() as { status?: string };
+  if (result.status !== 'cancelled') throw new Error('当前没有可取消的运行');
 }
 
 export async function listConversations(): Promise<ConversationSummary[]> {

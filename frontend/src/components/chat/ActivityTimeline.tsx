@@ -11,6 +11,7 @@ import {
   Globe2,
   Loader2,
   Route,
+  RotateCcw,
   Search,
   Target,
   XCircle,
@@ -18,6 +19,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useChatStore } from '../../store/chatStore';
+import { retryChatRun } from '../../services/chatExecution';
 import type { AgentStep, GoalNodeData } from '../../types/chat';
 
 const toolLabels: Record<string, string> = {
@@ -184,6 +186,7 @@ export function ActivityTimeline() {
   const routeSelection = useChatStore((state) => state.routeSelection);
   const goalNodes = useChatStore((state) => state.goalNodes);
   const isStreaming = useChatStore((state) => state.isStreaming);
+  const runId = useChatStore((state) => state.runId);
 
   if (!steps.length && !routeSelection && !goalNodes.length) return null;
 
@@ -191,18 +194,36 @@ export function ActivityTimeline() {
   const assignedGoalIds = new Set(goalNodes.map((goal) => goal.id));
   const unassignedSteps = steps.filter((step) => !step.node_id || !assignedGoalIds.has(step.node_id));
   const running = isStreaming || goalNodes.some((goal) => goal.status === 'running');
+  const retryable = Boolean(
+    runId
+      && !isStreaming
+      && roots.some((goal) => goal.status === 'failed' || goal.status === 'cancelled')
+  );
   const activityCount = steps.length + goalNodes.length + (routeSelection ? 1 : 0);
 
   return (
     <div className="ml-11 mr-2 min-w-0 border-l-2 border-gray-200 pl-3 dark:border-gray-700">
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="flex h-8 max-w-full items-center gap-2 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-      >
-        {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
-        <span className="truncate">{running ? '正在执行' : `执行活动 · ${activityCount} 项`}</span>
-      </button>
+      <div className="flex min-w-0 items-center">
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="flex h-8 min-w-0 flex-1 items-center gap-2 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+        >
+          {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+          <span className="truncate">{running ? '正在执行' : `执行活动 · ${activityCount} 项`}</span>
+        </button>
+        {retryable && runId && (
+          <button
+            type="button"
+            onClick={() => retryChatRun(runId)}
+            className="flex h-7 shrink-0 items-center gap-1 px-2 text-[11px] font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+            title="重新执行此运行"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            重试运行
+          </button>
+        )}
+      </div>
 
       {expanded && (
         <div className="max-w-3xl space-y-2 pb-3">
