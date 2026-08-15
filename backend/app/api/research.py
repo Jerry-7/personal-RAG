@@ -84,6 +84,8 @@ def _compression_metrics(events: list[RunEvent]) -> dict[str, int | float]:
     compressed_count = 0
     failure_count = 0
     agent_calls = 0
+    protected_anchors = 0
+    anchor_retries = 0
     original_tokens = 0
     compressed_tokens = 0
     for event in events:
@@ -95,6 +97,8 @@ def _compression_metrics(events: list[RunEvent]) -> dict[str, int | float]:
         payload = json.loads(event.payload_json or "{}")
         compressed_count += 1
         agent_calls += max(0, int(payload.get("calls") or 0))
+        protected_anchors += max(0, int(payload.get("protected_anchors") or 0))
+        anchor_retries += max(0, int(payload.get("anchor_retries") or 0))
         original_tokens += max(0, int(payload.get("original_tokens") or 0))
         compressed_tokens += max(0, int(payload.get("compressed_tokens") or 0))
     tokens_saved = max(0, original_tokens - compressed_tokens)
@@ -107,6 +111,8 @@ def _compression_metrics(events: list[RunEvent]) -> dict[str, int | float]:
         "context_compressions": compressed_count,
         "context_compression_failures": failure_count,
         "context_compression_calls": agent_calls,
+        "context_protected_anchors": protected_anchors,
+        "context_anchor_retries": anchor_retries,
         "context_original_tokens": original_tokens,
         "context_compressed_tokens": compressed_tokens,
         "context_tokens_saved": tokens_saved,

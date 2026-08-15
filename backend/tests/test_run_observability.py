@@ -107,6 +107,8 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
                 "original_tokens": 10000,
                 "compressed_tokens": 2500,
                 "calls": 4,
+                "protected_anchors": 3,
+                "anchor_retries": 1,
             },
             node_id=primary.id,
         )
@@ -151,6 +153,8 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source_summary["metrics"]["context_compressions"], 1)
         self.assertEqual(source_summary["metrics"]["context_compression_failures"], 1)
         self.assertEqual(source_summary["metrics"]["context_compression_calls"], 4)
+        self.assertEqual(source_summary["metrics"]["context_protected_anchors"], 3)
+        self.assertEqual(source_summary["metrics"]["context_anchor_retries"], 1)
         self.assertEqual(source_summary["metrics"]["context_tokens_saved"], 7500)
         self.assertEqual(source_summary["metrics"]["context_compression_ratio"], 75.0)
         self.assertEqual(source_summary["routing"]["route"], "supervisor")
