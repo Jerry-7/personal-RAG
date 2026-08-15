@@ -509,6 +509,21 @@ export function ActivityTimeline() {
                     <Globe2 className="h-3 w-3" />
                     {runSnapshot.metrics.web_pages_used}/{runSnapshot.metrics.web_page_budget}
                   </span>
+                  {runSnapshot.metrics.context_compressions > 0 && (
+                    <span
+                      className="flex items-center gap-1 tabular-nums"
+                      title={`${runSnapshot.metrics.context_compressions} 次压缩 · ${runSnapshot.metrics.context_compression_calls} 次模型调用`}
+                    >
+                      <Minimize2 className="h-3 w-3 text-teal-600" />
+                      节省 {runSnapshot.metrics.context_tokens_saved.toLocaleString()} tokens · {runSnapshot.metrics.context_compression_ratio}%
+                    </span>
+                  )}
+                  {runSnapshot.metrics.context_compression_failures > 0 && (
+                    <span className="flex items-center gap-1 text-red-500">
+                      <XCircle className="h-3 w-3" />
+                      压缩失败 {runSnapshot.metrics.context_compression_failures}
+                    </span>
+                  )}
                   {runSnapshot.retry_of_run_id && <span>重试运行</span>}
                   {runSnapshot.retry_count > 0 && <span>{runSnapshot.retry_count} 次后续重试</span>}
                   {runSnapshot.status === 'completed' && runId && (

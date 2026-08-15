@@ -169,6 +169,13 @@ export interface RunMetrics {
   tool_call_budget: number;
   web_pages_used: number;
   web_page_budget: number;
+  context_compressions: number;
+  context_compression_failures: number;
+  context_compression_calls: number;
+  context_original_tokens: number;
+  context_compressed_tokens: number;
+  context_tokens_saved: number;
+  context_compression_ratio: number;
 }
 
 export interface ResearchRunSummary {
