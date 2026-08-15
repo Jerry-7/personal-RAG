@@ -7,6 +7,7 @@ from collections import Counter, defaultdict
 from typing import Any
 
 from app.db.models import AgentRun, AgentRunFeedback, GoalNode, ToolExecution
+from app.services.routing_recommendations import build_routing_recommendations
 
 
 TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "interrupted"})
@@ -131,4 +132,8 @@ def build_routing_analytics(
     summary["planning_source_counts"] = dict(Counter(
         _planning_source(run, goals_by_run[run.id]) for run in runs
     ))
-    return {"summary": summary, "groups": groups}
+    analytics = {"summary": summary, "groups": groups}
+    return {
+        **analytics,
+        "recommendation_report": build_routing_recommendations(analytics),
+    }

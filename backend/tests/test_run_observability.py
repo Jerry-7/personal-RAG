@@ -171,6 +171,8 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(expert["route"], "supervisor")
         self.assertEqual(expert["planning_source"], "model")
         self.assertEqual(expert["operational_success_rate"], 100.0)
+        self.assertFalse(analytics["recommendation_report"]["readiness"]["operational_ready"])
+        self.assertEqual(analytics["recommendation_report"]["items"], [])
 
     async def test_feedback_lifecycle_updates_run_and_routing_quality(self):
         positive = await update_run_feedback(
