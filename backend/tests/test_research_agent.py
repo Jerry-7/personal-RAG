@@ -19,6 +19,7 @@ from app.db.database import Base
 from app.db.models import Conversation, Message, WebSnapshot
 from app.providers.base import AgentResponse, LLMResponse
 from app.providers.ollama import OllamaLLMProvider
+from app.services.context_compression import CompressedText, CompressionStats
 from app.services.notes import note_service
 from app.services.web_fetcher import FetchedPage, WebFetcher
 from app.services.web_research import WebResearchService
@@ -150,6 +151,52 @@ class ToolVisibilityTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentInputProcessorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rewrite_compresses_complete_input_without_character_cuts(self):
+        captured: dict[str, str] = {}
+        question = "CURRENT-REQUEST " + "q" * 1200
+        long_query = "QUERY-" + "k" * 700
+        history = [
+            {"role": "user", "content": f"HISTORY-{index} " + "h" * 600}
+            for index in range(12)
+        ]
+
+        class Compressor:
+            def __init__(self, provider):
+                self.provider = provider
+
+            async def compress_text(self, value, **kwargs):
+                captured["input"] = value
+                return CompressedText(
+                    content="COMPRESSED-COMPLETE-INPUT",
+                    stats=CompressionStats(
+                        original_tokens=2500,
+                        compressed_tokens=120,
+                        calls=2,
+                        rounds=1,
+                    ),
+                )
+
+        class Provider:
+            async def chat(self, **kwargs):
+                captured["rewrite_input"] = kwargs["messages"][-1]["content"]
+                return LLMResponse(content=json.dumps({
+                    "standalone_question": question,
+                    "search_queries": [long_query],
+                }))
+
+        with patch("app.agent.input_processor.ContextCompressor", Compressor):
+            plan = await AgentInputProcessor().optimize(
+                Provider(), question, history
+            )
+
+        self.assertIn("HISTORY-0", captured["input"])
+        self.assertIn("HISTORY-11", captured["input"])
+        self.assertIn(question, captured["input"])
+        self.assertEqual(captured["rewrite_input"], "COMPRESSED-COMPLETE-INPUT")
+        self.assertEqual(plan.original_question, question)
+        self.assertEqual(plan.search_queries, [long_query])
+        self.assertEqual(plan.compression_stats.calls, 2)
+
     async def test_rewrite_resolves_follow_up_and_builds_search_queries(self):
         class Provider:
             async def chat(self, **kwargs):

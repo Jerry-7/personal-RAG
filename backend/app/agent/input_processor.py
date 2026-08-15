@@ -5,11 +5,16 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app.config import settings
 from app.providers.base import LLMProvider
+from app.services.context_compression import (
+    CompressionStats,
+    ContextCompressionError,
+    ContextCompressor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +49,7 @@ class UserInputPlan:
     # 提炼后的关键词
     search_queries: list[str] = field(default_factory=list)
     rewritten: bool = False
+    compression_stats: CompressionStats | None = None
 
     @property
     def primary_search_query(self) -> str:
@@ -81,7 +87,6 @@ class AgentInputProcessor:
         chat = getattr(provider, "chat", None)
         if not callable(chat):
             return fallback
-        # 获取历史信息 标准化
         history_text = self._format_history(chat_history or [])
         request = (
             "Conversation context:\n"
@@ -89,12 +94,20 @@ class AgentInputProcessor:
             "Current request:\n"
             f"{original}"
         )
+        compression_stats = None
         try:
+            compressed_request = await ContextCompressor(provider).compress_text(
+                request,
+                target_tokens=settings.agent_input_max_tokens,
+                purpose="context-aware user input rewrite",
+            )
+            if compressed_request.stats.compressed:
+                compression_stats = compressed_request.stats
             # Agent转化用户输入
             response = await chat(
                 messages=[
                     {"role": "system", "content": INPUT_REWRITE_PROMPT},
-                    {"role": "user", "content": request},
+                    {"role": "user", "content": compressed_request.content},
                 ],
                 temperature=0.0,
                 max_tokens=600,
@@ -111,41 +124,46 @@ class AgentInputProcessor:
                 standalone_question=standalone,
                 search_queries=queries,
                 rewritten=standalone != original,
+                compression_stats=compression_stats,
             )
         except (TypeError, ValueError, json.JSONDecodeError):
             logger.info("User input rewrite was invalid; using normalized input")
+            return replace(fallback, compression_stats=compression_stats)
+        except ContextCompressionError:
+            logger.warning(
+                "User input rewrite context compression failed; preserving original input",
+                exc_info=True,
+            )
             return fallback
         except Exception:
             logger.warning(
                 "User input rewrite failed; using normalized input", exc_info=True
             )
-            return fallback
+            return replace(fallback, compression_stats=compression_stats)
 
     # 处理空格、制表符
     @staticmethod
     def _normalize(value: str) -> str:
-        value = value.strip()[: settings.agent_input_max_chars]
+        value = value.strip()
         lines = [re.sub(r"[ \t]+", " ", line).rstrip() for line in value.splitlines()]
         normalized = "\n".join(lines)
         return re.sub(r"\n{3,}", "\n\n", normalized).strip()
-    # 后续考虑按照token切片
     def _format_history(self, history: list[dict[str, str]]) -> str:
         parts: list[str] = []
-        for message in history[-8:]:
+        for message in history:
             content = self._normalize(str(message.get("content", "")))
             if not content:
                 continue
             role = str(message.get("role", "message")).upper()
             parts.append(f"<{role}>\n{content}\n</{role}>")
-            # 最大取settings.agent_input_history_max_chars个字符
-        return "\n".join(parts)[-settings.agent_input_history_max_chars :]
+        return "\n".join(parts)
 
     def _normalize_queries(self, value: Any, fallback: str) -> list[str]:
         if not isinstance(value, list):
             return [fallback]
         queries: list[str] = []
         for item in value:
-            query = self._normalize(str(item))[:500].strip()
+            query = self._normalize(str(item)).strip()
             if query and query not in queries:
                 queries.append(query)
             if len(queries) == 3:
