@@ -19,6 +19,8 @@ import {
   RotateCcw,
   Search,
   Target,
+  ThumbsDown,
+  ThumbsUp,
   Wrench,
   XCircle,
 } from 'lucide-react';
@@ -27,7 +29,8 @@ import remarkGfm from 'remark-gfm';
 import { useChatStore } from '../../store/chatStore';
 import { pauseChatExecution, resumeChatExecution, retryChatRun } from '../../services/chatExecution';
 import { loadRunSnapshot } from '../../services/runHistory';
-import type { AgentStep, GoalNodeData } from '../../types/chat';
+import { removeRunFeedback, saveRunFeedback } from '../../services/runFeedback';
+import type { AgentRunFeedbackReason, AgentStep, GoalNodeData } from '../../types/chat';
 
 const toolLabels: Record<string, string> = {
   web_search: '搜索网页',
@@ -72,6 +75,13 @@ const runStatusLabels = {
   cancelled: '已取消',
   interrupted: '已中断',
 } as const;
+
+const feedbackReasonLabels: Record<AgentRunFeedbackReason, string> = {
+  incorrect: '内容不正确',
+  missing_evidence: '证据不足',
+  too_slow: '执行过慢',
+  over_complicated: '过度复杂',
+};
 
 function formatDuration(durationMs: number | null): string {
   if (durationMs === null) return '--';
@@ -259,6 +269,7 @@ function GoalBranch({ goal, goals, steps, compact = false }: GoalBranchProps) {
 export function ActivityTimeline() {
   const [expanded, setExpanded] = useState(true);
   const [controlPending, setControlPending] = useState(false);
+  const [feedbackPending, setFeedbackPending] = useState(false);
   const steps = useChatStore((state) => state.agentSteps);
   const routeSelection = useChatStore((state) => state.routeSelection);
   const goalNodes = useChatStore((state) => state.goalNodes);
@@ -297,6 +308,35 @@ export function ActivityTimeline() {
   const liveTreeShape = getAgentTreeShape(goalNodes);
   const observedMaxChildren = routeSelection?.observed_max_children ?? liveTreeShape.maxChildren;
   const observedMaxDepth = routeSelection?.observed_max_depth ?? liveTreeShape.maxDepth;
+  const updateFeedback = async (
+    rating: 'positive' | 'negative',
+    reason?: AgentRunFeedbackReason,
+  ) => {
+    if (!runId || feedbackPending) return;
+    setFeedbackPending(true);
+    try {
+      if (runSnapshot?.feedback?.rating === rating && !reason) {
+        await removeRunFeedback(runId);
+      } else {
+        await saveRunFeedback(runId, rating, reason);
+      }
+    } catch (error) {
+      console.error('Failed to update Agent run feedback', error);
+    } finally {
+      setFeedbackPending(false);
+    }
+  };
+  const updateFeedbackReason = async (reason?: AgentRunFeedbackReason) => {
+    if (!runId || feedbackPending) return;
+    setFeedbackPending(true);
+    try {
+      await saveRunFeedback(runId, 'negative', reason);
+    } catch (error) {
+      console.error('Failed to update feedback reason', error);
+    } finally {
+      setFeedbackPending(false);
+    }
+  };
   const togglePaused = async () => {
     if (controlPending) return;
     setControlPending(true);
@@ -399,9 +439,62 @@ export function ActivityTimeline() {
                   </span>
                   {runSnapshot.retry_of_run_id && <span>重试运行</span>}
                   {runSnapshot.retry_count > 0 && <span>{runSnapshot.retry_count} 次后续重试</span>}
+                  {runSnapshot.status === 'completed' && runId && (
+                    <span className="flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        aria-label="回答有帮助"
+                        aria-pressed={runSnapshot.feedback?.rating === 'positive'}
+                        title="回答有帮助"
+                        disabled={feedbackPending}
+                        onClick={() => void updateFeedback('positive')}
+                        className={`flex h-6 w-6 items-center justify-center rounded-sm disabled:opacity-50 ${
+                          runSnapshot.feedback?.rating === 'positive'
+                            ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400'
+                            : 'text-gray-400 hover:text-green-600'
+                        }`}
+                      >
+                        <ThumbsUp className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="回答需要改进"
+                        aria-pressed={runSnapshot.feedback?.rating === 'negative'}
+                        title="回答需要改进"
+                        disabled={feedbackPending}
+                        onClick={() => void updateFeedback('negative')}
+                        className={`flex h-6 w-6 items-center justify-center rounded-sm disabled:opacity-50 ${
+                          runSnapshot.feedback?.rating === 'negative'
+                            ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400'
+                            : 'text-gray-400 hover:text-red-500'
+                        }`}
+                      >
+                        <ThumbsDown className="h-3.5 w-3.5" />
+                      </button>
+                    </span>
+                  )}
                 </>
               )}
             </div>
+          )}
+          {runSnapshot?.feedback?.rating === 'negative' && runId && (
+            <label className="ml-5 flex min-w-0 items-center gap-2 text-[10px] text-gray-400">
+              <span className="shrink-0">改进原因</span>
+              <select
+                aria-label="选择需要改进的原因"
+                value={runSnapshot.feedback.reason || ''}
+                disabled={feedbackPending}
+                onChange={(event) => void updateFeedbackReason(
+                  (event.target.value || undefined) as AgentRunFeedbackReason | undefined,
+                )}
+                className="h-6 min-w-0 max-w-40 rounded-sm border border-gray-200 bg-white px-1.5 text-[10px] text-gray-600 outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
+              >
+                <option value="">未选择</option>
+                {(Object.entries(feedbackReasonLabels) as [AgentRunFeedbackReason, string][]).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
           )}
           {routingAnalytics && routingAnalytics.summary.run_count > 0 && (
             <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-gray-400">
@@ -427,6 +520,11 @@ export function ActivityTimeline() {
               </span>
               {routingAnalytics.summary.retry_run_count > 0 && (
                 <span className="shrink-0 tabular-nums">重试 {routingAnalytics.summary.retry_rate}%</span>
+              )}
+              {routingAnalytics.summary.rated_run_count > 0 && (
+                <span className="shrink-0 tabular-nums text-teal-600 dark:text-teal-400">
+                  满意 {routingAnalytics.summary.user_satisfaction_rate}% · {routingAnalytics.summary.rated_run_count} 份
+                </span>
               )}
               <div className="flex h-1.5 min-w-16 flex-1 overflow-hidden rounded-sm bg-gray-200 dark:bg-gray-700" aria-label="Agent 等级样本分布">
                 {(['fast', 'standard', 'expert'] as const).map((tier) => {

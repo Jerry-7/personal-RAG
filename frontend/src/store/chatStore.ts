@@ -5,7 +5,7 @@
  */
 
 import { create } from 'zustand';
-import type { AgentStep, CitationData, GoalNodeData, MessageItem, ResearchRunDetail, ResearchRunSummary, RouteSelection, RoutingAnalytics, RunEventData } from '../types/chat';
+import type { AgentRunFeedback, AgentStep, CitationData, GoalNodeData, MessageItem, ResearchRunDetail, ResearchRunSummary, RouteSelection, RoutingAnalytics, RunEventData } from '../types/chat';
 
 interface ChatState {
   /** 当前对话 ID */
@@ -47,6 +47,7 @@ interface ChatState {
   setRunHistory: (runs: ResearchRunSummary[]) => void;
   restoreRunSnapshot: (snapshot: ResearchRunDetail) => void;
   setRoutingAnalytics: (analytics: RoutingAnalytics) => void;
+  setRunFeedback: (runId: string, feedback: AgentRunFeedback | null) => void;
   setPaused: (paused: boolean) => void;
   setRouteSelection: (selection: RouteSelection) => void;
   applyRunEvent: (event: RunEventData) => void;
@@ -172,6 +173,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })),
   }),
   setRoutingAnalytics: (routingAnalytics) => set({ routingAnalytics }),
+  setRunFeedback: (runId, feedback) => set((state) => ({
+    runHistory: state.runHistory.map((run) =>
+      run.id === runId ? { ...run, feedback } : run
+    ),
+    runSnapshot: state.runSnapshot?.id === runId
+      ? { ...state.runSnapshot, feedback }
+      : state.runSnapshot,
+  })),
   setPaused: (paused) => set({ isPaused: paused }),
   setRouteSelection: (selection) => set({ routeSelection: selection }),
   applyRunEvent: (event) => set((state) => {

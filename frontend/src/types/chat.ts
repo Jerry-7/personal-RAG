@@ -182,6 +182,20 @@ export interface ResearchRunSummary {
   error_message: string | null;
   started_at: string | null;
   completed_at: string | null;
+  feedback: AgentRunFeedback | null;
+}
+
+export type AgentRunFeedbackReason =
+  | 'incorrect'
+  | 'missing_evidence'
+  | 'too_slow'
+  | 'over_complicated';
+
+export interface AgentRunFeedback {
+  rating: 'positive' | 'negative';
+  reason: AgentRunFeedbackReason | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PersistedToolExecution {
@@ -222,6 +236,11 @@ export interface RoutingAnalyticsMetrics {
   tool_failure_rate: number;
   tool_call_budget: number;
   tool_budget_utilization: number;
+  rated_run_count: number;
+  positive_feedback_count: number;
+  negative_feedback_count: number;
+  user_satisfaction_rate: number;
+  negative_reason_counts: Partial<Record<AgentRunFeedbackReason, number>>;
 }
 
 export interface RoutingAnalyticsGroup extends RoutingAnalyticsMetrics {
