@@ -267,6 +267,7 @@ async def _agent_event_generator(
         agent_profile=agent_profile.name,
         input_data={"question": question, "route": route_decision.route},
         tool_call_budget=agent_profile.tool_call_budget,
+        tool_repeat_limit=agent_profile.tool_repeat_limit,
         model_provider=model_selection.provider,
         model_name=model_selection.model,
     )
@@ -280,9 +281,9 @@ async def _agent_event_generator(
         mode=mode,
         cancellation_event=cancellation_event,
         pause_event=pause_event,
-        allowed_tool_sources=agent_profile.allowed_tool_sources,
         agent_profile=agent_profile.name,
         tool_call_budget=agent_profile.tool_call_budget,
+        tool_repeat_limit=agent_profile.tool_repeat_limit,
         web_page_budget=agent_run.web_page_budget,
         max_crawl_depth=agent_run.max_depth,
     )
@@ -324,6 +325,7 @@ async def _agent_event_generator(
                 **route_decision.to_dict(),
                 "agent_profile": agent_profile.name,
                 "tool_call_budget": agent_profile.tool_call_budget,
+                "tool_repeat_limit": agent_profile.tool_repeat_limit,
                 **model_selection.to_dict(),
             }, ensure_ascii=False),
         }

@@ -88,11 +88,13 @@ class GoalRuntimeTests(unittest.TestCase):
             agent_profile="standard_research",
             input_data={"route": "tool_agent"},
             tool_call_budget=5,
+            tool_repeat_limit=3,
         )
 
         self.assertEqual(child.parent_id, root.id)
         self.assertEqual(child.status, "running")
         self.assertEqual(serialize_goal(child)["tool_call_budget"], 5)
+        self.assertEqual(serialize_goal(child)["tool_repeat_limit"], 3)
         self.assertEqual([event.sequence for event in events], [3, 4])
         with self.assertRaises(ValueError):
             runtime.create_child(
@@ -102,6 +104,15 @@ class GoalRuntimeTests(unittest.TestCase):
                 agent_profile="standard_research",
                 input_data={},
                 max_attempts=0,
+            )
+        with self.assertRaises(ValueError):
+            runtime.create_child(
+                parent=root,
+                title="非法频率限制",
+                kind="agent",
+                agent_profile="standard_research",
+                input_data={},
+                tool_repeat_limit=-1,
             )
 
     def test_retry_increments_attempt_without_leaving_running_state(self):
@@ -193,4 +204,45 @@ class GoalRuntimeTests(unittest.TestCase):
                 "SELECT tool_call_budget FROM goal_nodes WHERE id = 'goal'"
             )).scalar_one()
             self.assertEqual(budget, 6)
+        engine.dispose()
+
+    def test_tool_frequency_migration_backfills_profiles_and_is_idempotent(self):
+        engine = create_engine("sqlite:///:memory:")
+        migration_path = (
+            Path(__file__).parents[1]
+            / "alembic"
+            / "versions"
+            / "20260815_11_tool_frequency_guidance.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "tool_frequency_migration", migration_path
+        )
+        assert spec and spec.loader
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE goal_nodes ("
+                "id VARCHAR(36) PRIMARY KEY, kind VARCHAR(32), "
+                "agent_profile VARCHAR(64))"
+            ))
+            connection.execute(text(
+                "INSERT INTO goal_nodes (id, kind, agent_profile) VALUES "
+                "('fast', 'agent', 'fast_general'), "
+                "('expert', 'agent', 'expert_supervisor'), "
+                "('root', 'root', 'expert_supervisor')"
+            ))
+            migration.op = Operations(MigrationContext.configure(connection))
+            migration.upgrade()
+            migration.upgrade()
+
+            limits = connection.execute(text(
+                "SELECT id, tool_repeat_limit FROM goal_nodes ORDER BY id"
+            )).all()
+            self.assertEqual(limits, [
+                ("expert", 5),
+                ("fast", 1),
+                ("root", 0),
+            ])
         engine.dispose()

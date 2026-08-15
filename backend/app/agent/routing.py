@@ -63,10 +63,10 @@ class AgentProfile:
     capabilities: frozenset[str] = field(default_factory=frozenset)
     max_iterations: int = 3
     tool_call_budget: int = 5
+    tool_repeat_limit: int = 2
     max_attempts: int = 1
     max_children: int = 0
     max_depth: int = 0
-    allowed_tool_sources: frozenset[str] = field(default_factory=frozenset)
     model_key: str | None = None
 
 
@@ -125,6 +125,8 @@ class AgentRegistry:
             raise ValueError("max_iterations must be positive")
         if profile.tool_call_budget < 1:
             raise ValueError("tool_call_budget must be positive")
+        if profile.tool_repeat_limit < 1:
+            raise ValueError("tool_repeat_limit must be positive")
         if profile.max_attempts < 1:
             raise ValueError("max_attempts must be positive")
         if profile.max_children < 0 or profile.max_depth < 0:
@@ -345,7 +347,7 @@ def build_default_agent_registry() -> AgentRegistry:
             capabilities=frozenset({"conversation", "direct_answer"}),
             max_iterations=1,
             tool_call_budget=2,
-            allowed_tool_sources=frozenset({"builtin", "skill", "web"}),
+            tool_repeat_limit=1,
             model_key="fast",
         ),
         AgentProfile(
@@ -355,9 +357,9 @@ def build_default_agent_registry() -> AgentRegistry:
             capabilities=frozenset({"conversation", "local_retrieval", "web_research", "tool_calling"}),
             max_iterations=5,
             tool_call_budget=5,
+            tool_repeat_limit=3,
             max_children=1,
             max_depth=1,
-            allowed_tool_sources=frozenset({"builtin", "skill", "web"}),
             model_key="standard",
         ),
         AgentProfile(
@@ -367,9 +369,9 @@ def build_default_agent_registry() -> AgentRegistry:
             capabilities=frozenset({"planning", "parallel_agents", "evidence_synthesis", "tool_calling"}),
             max_iterations=8,
             tool_call_budget=10,
+            tool_repeat_limit=5,
             max_children=4,
             max_depth=2,
-            allowed_tool_sources=frozenset({"builtin", "skill", "web"}),
             model_key="expert",
         ),
         AgentProfile(
@@ -379,8 +381,8 @@ def build_default_agent_registry() -> AgentRegistry:
             capabilities=frozenset({"local_retrieval", "tool_calling"}),
             max_iterations=3,
             tool_call_budget=4,
+            tool_repeat_limit=3,
             max_attempts=2,
-            allowed_tool_sources=frozenset({"builtin", "skill", "web"}),
             model_key="standard",
         ),
         AgentProfile(
@@ -390,8 +392,8 @@ def build_default_agent_registry() -> AgentRegistry:
             capabilities=frozenset({"web_research", "tool_calling"}),
             max_iterations=4,
             tool_call_budget=6,
+            tool_repeat_limit=4,
             max_attempts=2,
-            allowed_tool_sources=frozenset({"builtin", "skill", "web"}),
             model_key="standard",
         ),
         AgentProfile(
@@ -401,7 +403,7 @@ def build_default_agent_registry() -> AgentRegistry:
             capabilities=frozenset({"evidence_synthesis", "tool_calling"}),
             max_iterations=3,
             tool_call_budget=3,
-            allowed_tool_sources=frozenset({"builtin", "skill", "web"}),
+            tool_repeat_limit=2,
             model_key="expert",
         ),
     ])

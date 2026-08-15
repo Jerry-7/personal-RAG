@@ -65,6 +65,24 @@ def _summarize(
         for item in feedback
         if item.rating == "negative" and item.reason
     )
+    repeat_overrun_runs = 0
+    for run in runs:
+        agent_goals = {
+            goal.id: goal
+            for goal in goals_by_run.get(run.id, [])
+            if goal.kind == "agent"
+        }
+        repetitions = Counter(
+            (tool.node_id, tool.tool_name)
+            for tool in tools_by_run.get(run.id, [])
+            if tool.node_id in agent_goals
+        )
+        if any(
+            count > agent_goals[node_id].tool_repeat_limit
+            for (node_id, _), count in repetitions.items()
+            if agent_goals[node_id].tool_repeat_limit > 0
+        ):
+            repeat_overrun_runs += 1
     return {
         "run_count": len(runs),
         "terminal_run_count": len(terminal_runs),
@@ -87,6 +105,8 @@ def _summarize(
         "tool_failure_rate": _percent(failed_tools, len(tools)),
         "tool_call_budget": tool_budget,
         "tool_budget_utilization": _percent(len(tools), tool_budget),
+        "tool_repeat_overrun_run_count": repeat_overrun_runs,
+        "tool_repeat_overrun_rate": _percent(repeat_overrun_runs, len(runs)),
         "rated_run_count": len(feedback),
         "positive_feedback_count": positive_feedback,
         "negative_feedback_count": len(feedback) - positive_feedback,

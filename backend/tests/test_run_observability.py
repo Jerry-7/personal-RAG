@@ -79,6 +79,7 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
             agent_profile="expert_supervisor",
             input_data={},
             tool_call_budget=10,
+            tool_repeat_limit=5,
             model_provider="ollama",
             model_name="expert-model",
         )
@@ -89,6 +90,7 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
             agent_profile="web_researcher",
             input_data={"planning_source": "model"},
             tool_call_budget=7,
+            tool_repeat_limit=2,
             model_provider="ollama",
             model_name="standard-model",
         )
@@ -102,7 +104,29 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
             status="completed",
             duration_ms=125,
         )
-        self.db.add(self.tool)
+        repeated_tools = [
+            ToolExecution(
+                id="tool-execution-2",
+                run_id=self.run.id,
+                node_id=worker.id,
+                iteration=2,
+                tool_name="web_search",
+                arguments_json='{"query": "test follow-up"}',
+                status="completed",
+                duration_ms=80,
+            ),
+            ToolExecution(
+                id="tool-execution-3",
+                run_id=self.run.id,
+                node_id=worker.id,
+                iteration=3,
+                tool_name="web_search",
+                arguments_json='{"query": "test final"}',
+                status="completed",
+                duration_ms=95,
+            ),
+        ]
+        self.db.add_all([self.tool, *repeated_tools])
         runtime.transition(worker, "completed")
         runtime.transition(primary, "completed")
         runtime.transition(root, "completed")
@@ -151,8 +175,10 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         source_summary = listed["runs"][1]
         self.assertEqual(source_summary["retry_count"], 1)
         self.assertEqual(source_summary["metrics"]["agent_count"], 2)
-        self.assertEqual(source_summary["metrics"]["tool_calls_used"], 1)
+        self.assertEqual(source_summary["metrics"]["tool_calls_used"], 3)
         self.assertEqual(source_summary["metrics"]["tool_call_budget"], 17)
+        self.assertEqual(source_summary["metrics"]["tool_repeat_peak"], 3)
+        self.assertEqual(source_summary["metrics"]["tool_repeat_overrun_count"], 1)
         self.assertEqual(source_summary["metrics"]["progress_percent"], 100)
         self.assertEqual(source_summary["metrics"]["goals_pending"], 0)
         self.assertEqual(source_summary["metrics"]["goal_retry_attempts"], 0)
@@ -166,6 +192,7 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source_summary["routing"]["route"], "supervisor")
         self.assertEqual(source_summary["routing"]["max_children"], 4)
         self.assertEqual(source_summary["routing"]["max_depth"], 2)
+        self.assertEqual(source_summary["routing"]["tool_repeat_limit"], 5)
         self.assertEqual(source_summary["routing"]["decision_source"], "model")
         self.assertEqual(source_summary["routing"]["confidence"], 0.86)
         self.assertEqual(source_summary["routing"]["classifier_model"], "fast-model")
@@ -181,7 +208,7 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(detail["retried_by_run_ids"], [self.retry.id])
         self.assertFalse(detail["retryable"])
         self.assertEqual(detail["metrics"]["duration_ms"], 2000)
-        self.assertEqual(detail["metrics"]["tool_duration_ms"], 125)
+        self.assertEqual(detail["metrics"]["tool_duration_ms"], 300)
         self.assertEqual(detail["metrics"]["context_original_tokens"], 10000)
         self.assertEqual(detail["metrics"]["context_compressed_tokens"], 2500)
         self.assertEqual(detail["goals"][2]["tool_call_budget"], 7)
@@ -201,8 +228,10 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary["average_duration_ms"], 2000)
         self.assertEqual(summary["retry_run_count"], 1)
         self.assertEqual(summary["manual_override_count"], 1)
-        self.assertEqual(summary["tool_call_count"], 1)
-        self.assertEqual(summary["tool_budget_utilization"], 5.9)
+        self.assertEqual(summary["tool_call_count"], 3)
+        self.assertEqual(summary["tool_budget_utilization"], 17.6)
+        self.assertEqual(summary["tool_repeat_overrun_run_count"], 1)
+        self.assertEqual(summary["tool_repeat_overrun_rate"], 50.0)
         self.assertEqual(summary["tier_counts"], {
             "fast": 0,
             "standard": 1,

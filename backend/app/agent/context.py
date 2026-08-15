@@ -15,9 +15,9 @@ class AgentRunContext:
     run_id: str = ""
     goal_node_id: str = ""
     mode: str = "auto"
-    allowed_tool_sources: frozenset[str] | None = None
     agent_profile: str = "standard_research"
     tool_call_budget: int = 5
+    tool_repeat_limit: int = 2
     cancellation_event: Any | None = None
     pause_event: Any | None = None
     citations: list[dict[str, Any]] = field(default_factory=list)
@@ -45,7 +45,3 @@ class AgentRunContext:
 
     def can_fetch_page(self) -> bool:
         return self.web_pages_used < self.web_page_budget
-
-    def can_use_tool_source(self, source: str) -> bool:
-        """Return whether the selected Agent profile may use a tool source."""
-        return self.allowed_tool_sources is None or source in self.allowed_tool_sources

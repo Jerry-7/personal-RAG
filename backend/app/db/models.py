@@ -387,6 +387,9 @@ class GoalNode(Base):
     model_provider: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     model_name: Mapped[str] = mapped_column(String(256), nullable=False, default="")
     tool_call_budget: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tool_repeat_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

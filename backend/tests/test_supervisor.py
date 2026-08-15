@@ -165,6 +165,7 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
             mode="auto",
             agent_profile="expert_supervisor",
             tool_call_budget=10,
+            tool_repeat_limit=5,
         )
 
     def tearDown(self):
@@ -210,6 +211,10 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
             [goal.model_name for goal in worker_goals],
             ["standard-model", "standard-model", "expert-model"],
         )
+        self.assertEqual(
+            [goal.tool_repeat_limit for goal in worker_goals],
+            [3, 4, 2],
+        )
         dependencies = json.loads(worker_goals[-1].dependencies_json)
         self.assertEqual(dependencies, [worker_goals[0].id, worker_goals[1].id])
         self.assertIn(
@@ -218,6 +223,7 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(self.context.goal_node_id, self.parent.id)
         self.assertEqual(self.context.agent_profile, "expert_supervisor")
+        self.assertEqual(self.context.tool_repeat_limit, 5)
 
     async def test_model_plan_creates_question_specific_worker_goals(self):
         provider = PlanningProvider(json.dumps({"tasks": [

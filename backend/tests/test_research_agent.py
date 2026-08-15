@@ -276,7 +276,13 @@ class AgentEmptyResponseTests(unittest.IsolatedAsyncioTestCase):
             tools=registry,
             input_processor=Processor(),
         )
-        context = AgentRunContext(db=None, conversation_id="conv", mode="web")
+        context = AgentRunContext(
+            db=None,
+            conversation_id="conv",
+            mode="web",
+            tool_call_budget=6,
+            tool_repeat_limit=4,
+        )
 
         events = [event async for event in loop.run("original request", context=context)]
 
@@ -289,6 +295,14 @@ class AgentEmptyResponseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Context-resolved request", provider.messages[-1]["content"])
         self.assertIn("[W1]", provider.messages[0]["content"])
         self.assertIn("never citations", provider.messages[0]["content"])
+        self.assertIn(
+            "Suggested maximum total tool calls: 6",
+            provider.messages[0]["content"],
+        )
+        self.assertIn(
+            "Suggested maximum calls to any one tool: 4",
+            provider.messages[0]["content"],
+        )
 
     async def test_web_search_results_stay_in_the_user_message(self):
         registry = ToolRegistry()

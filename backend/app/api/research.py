@@ -131,6 +131,17 @@ def _metrics(
         goal_statuses[status] for status in ("completed", "failed", "cancelled")
     )
     progress_percent = round(terminal_goals * 100 / len(goals)) if goals else 0
+    agent_goals = {goal.id: goal for goal in goals if goal.kind == "agent"}
+    tool_repetitions = Counter(
+        (tool.node_id, tool.tool_name)
+        for tool in tools
+        if tool.node_id in agent_goals
+    )
+    repeat_overruns = sum(
+        count > agent_goals[node_id].tool_repeat_limit
+        for (node_id, _), count in tool_repetitions.items()
+        if agent_goals[node_id].tool_repeat_limit > 0
+    )
     return {
         "duration_ms": _duration_ms(run.started_at, run.completed_at),
         "goal_count": len(goals),
@@ -148,6 +159,8 @@ def _metrics(
         "tool_call_budget": sum(
             goal.tool_call_budget for goal in goals if goal.kind == "agent"
         ),
+        "tool_repeat_peak": max(tool_repetitions.values(), default=0),
+        "tool_repeat_overrun_count": repeat_overruns,
         "web_pages_used": run.web_pages_used,
         "web_page_budget": run.web_page_budget,
         **_compression_metrics(events or []),
@@ -165,6 +178,7 @@ def _routing(run: AgentRun, goals: list[GoalNode]) -> dict[str, Any]:
         "model_provider": run.model_provider,
         "model_name": run.model_name,
         "tool_call_budget": agent_goals[0].tool_call_budget if agent_goals else 0,
+        "tool_repeat_limit": agent_goals[0].tool_repeat_limit if agent_goals else 0,
         "tier": run.route_tier,
         "route": run.route_name,
         "score": run.route_score,

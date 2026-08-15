@@ -373,4 +373,6 @@ class RunReplayGeneratorTests(unittest.IsolatedAsyncioTestCase):
         route_selected = next(
             event for event in events if event["event"] == "route_selected"
         )
-        self.assertEqual(json.loads(route_selected["data"])["decision_source"], "manual")
+        route_data = json.loads(route_selected["data"])
+        self.assertEqual(route_data["decision_source"], "manual")
+        self.assertEqual(route_data["tool_repeat_limit"], 1)

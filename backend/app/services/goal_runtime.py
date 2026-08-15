@@ -35,6 +35,7 @@ def serialize_goal(node: GoalNode) -> dict[str, Any]:
         "model_provider": node.model_provider,
         "model_name": node.model_name,
         "tool_call_budget": node.tool_call_budget,
+        "tool_repeat_limit": node.tool_repeat_limit,
         "sequence": node.sequence,
         "attempt": node.attempt,
         "max_attempts": node.max_attempts,
@@ -83,9 +84,12 @@ class GoalRuntime:
         agent_profile: str,
         input_data: dict[str, Any],
         tool_call_budget: int = 0,
+        tool_repeat_limit: int = 0,
         model_provider: str = "",
         model_name: str = "",
     ) -> tuple[GoalNode, list[RunEvent]]:
+        if tool_repeat_limit < 0:
+            raise ValueError("tool_repeat_limit cannot be negative")
         node = GoalNode(
             run_id=self.run_id,
             title=title[:512],
@@ -93,6 +97,7 @@ class GoalRuntime:
             status="pending",
             agent_profile=agent_profile,
             tool_call_budget=tool_call_budget,
+            tool_repeat_limit=tool_repeat_limit,
             model_provider=model_provider,
             model_name=model_name,
             sequence=0,
@@ -116,6 +121,7 @@ class GoalRuntime:
         dependencies: list[str] | None = None,
         max_attempts: int = 1,
         tool_call_budget: int = 0,
+        tool_repeat_limit: int = 0,
         model_provider: str = "",
         model_name: str = "",
     ) -> tuple[GoalNode, list[RunEvent]]:
@@ -123,6 +129,8 @@ class GoalRuntime:
             raise ValueError("Parent goal belongs to a different run")
         if max_attempts < 1:
             raise ValueError("max_attempts must be positive")
+        if tool_repeat_limit < 0:
+            raise ValueError("tool_repeat_limit cannot be negative")
         self._node_sequence += 1
         node = GoalNode(
             run_id=self.run_id,
@@ -132,6 +140,7 @@ class GoalRuntime:
             status="pending",
             agent_profile=agent_profile,
             tool_call_budget=tool_call_budget,
+            tool_repeat_limit=tool_repeat_limit,
             model_provider=model_provider,
             model_name=model_name,
             sequence=self._node_sequence,

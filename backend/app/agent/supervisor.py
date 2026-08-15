@@ -78,7 +78,7 @@ class Supervisor:
             self.context.mode,
             self.context.agent_profile,
             self.context.tool_call_budget,
-            self.context.allowed_tool_sources,
+            self.context.tool_repeat_limit,
         )
         reports: list[tuple[WorkerSpec, str, str]] = []
         worker_goal_ids: list[str] = []
@@ -129,6 +129,7 @@ class Supervisor:
                     },
                     max_attempts=profile.max_attempts,
                     tool_call_budget=profile.tool_call_budget,
+                    tool_repeat_limit=profile.tool_repeat_limit,
                     model_provider=model_selection.provider,
                     model_name=model_selection.model,
                 )
@@ -231,6 +232,7 @@ class Supervisor:
                 input_data={"question": question, "role": "synthesizer"},
                 dependencies=worker_goal_ids,
                 tool_call_budget=synth_profile.tool_call_budget,
+                tool_repeat_limit=synth_profile.tool_repeat_limit,
                 model_provider=synth_model_selection.provider,
                 model_name=synth_model_selection.model,
             )
@@ -283,7 +285,7 @@ class Supervisor:
                 self.context.mode,
                 self.context.agent_profile,
                 self.context.tool_call_budget,
-                self.context.allowed_tool_sources,
+                self.context.tool_repeat_limit,
             ) = original_state
 
     async def _run_worker(
@@ -322,9 +324,9 @@ class Supervisor:
                         run_id=self.context.run_id,
                         goal_node_id=goal.id,
                         mode=spec.mode,
-                        allowed_tool_sources=profile.allowed_tool_sources,
                         agent_profile=profile.name,
                         tool_call_budget=profile.tool_call_budget,
+                        tool_repeat_limit=profile.tool_repeat_limit,
                         cancellation_event=self.context.cancellation_event,
                         pause_event=self.context.pause_event,
                         web_page_budget=web_page_budget,
@@ -433,7 +435,7 @@ class Supervisor:
         self.context.mode = mode
         self.context.agent_profile = profile.name
         self.context.tool_call_budget = profile.tool_call_budget
-        self.context.allowed_tool_sources = profile.allowed_tool_sources
+        self.context.tool_repeat_limit = profile.tool_repeat_limit
 
     @staticmethod
     def _split_budget(total: int, parts: int) -> list[int]:
