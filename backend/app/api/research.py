@@ -13,12 +13,14 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.db.models import (
     AgentRun,
+    AgentRunFeedback,
     GoalNode,
     ResearchRunSnapshot,
     RunEvent,
     ToolExecution,
     WebSnapshot,
 )
+from app.schemas.research import RunFeedbackUpdate
 from app.services.goal_runtime import serialize_event, serialize_goal
 from app.services.routing_analytics import build_routing_analytics
 from app.services.web_search import search_provider
@@ -133,12 +135,24 @@ def _routing(run: AgentRun, goals: list[GoalNode]) -> dict[str, Any]:
     }
 
 
+def _feedback(value: AgentRunFeedback | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return {
+        "rating": value.rating,
+        "reason": value.reason,
+        "created_at": _iso(value.created_at),
+        "updated_at": _iso(value.updated_at),
+    }
+
+
 def _summary(
     run: AgentRun,
     goals: list[GoalNode],
     tools: list[ToolExecution],
     *,
     retry_count: int = 0,
+    feedback: AgentRunFeedback | None = None,
 ) -> dict[str, Any]:
     return {
         "id": run.id,
@@ -154,6 +168,7 @@ def _summary(
         "error_message": run.error_message,
         "started_at": _iso(run.started_at),
         "completed_at": _iso(run.completed_at),
+        "feedback": _feedback(feedback),
     }
 
 
@@ -191,6 +206,12 @@ async def list_research_runs(
         .filter(AgentRun.retry_of_run_id.in_(run_ids))
         .all()
     ) if run_ids else Counter()
+    feedback_by_run = {
+        item.run_id: item
+        for item in db.query(AgentRunFeedback)
+        .filter(AgentRunFeedback.run_id.in_(run_ids))
+        .all()
+    } if run_ids else {}
     goals_by_run: dict[str, list[GoalNode]] = {run_id: [] for run_id in run_ids}
     tools_by_run: dict[str, list[ToolExecution]] = {run_id: [] for run_id in run_ids}
     for goal in goals:
@@ -204,6 +225,7 @@ async def list_research_runs(
                 goals_by_run[run.id],
                 tools_by_run[run.id],
                 retry_count=retry_counts[run.id],
+                feedback=feedback_by_run.get(run.id),
             )
             for run in runs
         ]
@@ -235,7 +257,13 @@ async def get_routing_analytics(
         .all()
         if run_ids else []
     )
-    return build_routing_analytics(runs, goals, tools)
+    feedback = (
+        db.query(AgentRunFeedback)
+        .filter(AgentRunFeedback.run_id.in_(run_ids))
+        .all()
+        if run_ids else []
+    )
+    return build_routing_analytics(runs, goals, tools, feedback)
 
 
 @router.get("/research-runs/{run_id}")
@@ -278,8 +306,15 @@ async def get_research_run(run_id: str, db: Session = Depends(get_db)):
         .order_by(AgentRun.started_at)
         .all()
     ]
+    feedback = db.get(AgentRunFeedback, run_id)
     return {
-        **_summary(run, goals, executions, retry_count=len(retried_by_run_ids)),
+        **_summary(
+            run,
+            goals,
+            executions,
+            retry_count=len(retried_by_run_ids),
+            feedback=feedback,
+        ),
         "retryable": (
             run.status in {"failed", "cancelled", "interrupted"}
             and not has_active_run
@@ -309,6 +344,39 @@ async def get_research_run(run_id: str, db: Session = Depends(get_db)):
             "content_hash": item.content_hash,
         } for item in snapshots],
     }
+
+
+@router.put("/research-runs/{run_id}/feedback")
+async def update_run_feedback(
+    run_id: str,
+    payload: RunFeedbackUpdate,
+    db: Session = Depends(get_db),
+):
+    run = db.get(AgentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="研究运行不存在")
+    if run.status != "completed":
+        raise HTTPException(status_code=409, detail="只能评价已完成的运行")
+    feedback = db.get(AgentRunFeedback, run_id)
+    if feedback is None:
+        feedback = AgentRunFeedback(run_id=run_id, rating=payload.rating)
+        db.add(feedback)
+    feedback.rating = payload.rating
+    feedback.reason = payload.reason if payload.rating == "negative" else None
+    db.commit()
+    db.refresh(feedback)
+    return _feedback(feedback)
+
+
+@router.delete("/research-runs/{run_id}/feedback")
+async def delete_run_feedback(run_id: str, db: Session = Depends(get_db)):
+    if db.get(AgentRun, run_id) is None:
+        raise HTTPException(status_code=404, detail="研究运行不存在")
+    feedback = db.get(AgentRunFeedback, run_id)
+    if feedback is not None:
+        db.delete(feedback)
+        db.commit()
+    return {"status": "removed"}
 
 
 @router.get("/web-search/health")

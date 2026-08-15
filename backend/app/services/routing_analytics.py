@@ -6,7 +6,7 @@ import json
 from collections import Counter, defaultdict
 from typing import Any
 
-from app.db.models import AgentRun, GoalNode, ToolExecution
+from app.db.models import AgentRun, AgentRunFeedback, GoalNode, ToolExecution
 
 
 TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "interrupted"})
@@ -44,6 +44,7 @@ def _summarize(
     runs: list[AgentRun],
     goals_by_run: dict[str, list[GoalNode]],
     tools_by_run: dict[str, list[ToolExecution]],
+    feedback_by_run: dict[str, AgentRunFeedback],
 ) -> dict[str, Any]:
     statuses = Counter(run.status for run in runs)
     terminal_runs = [run for run in runs if run.status in TERMINAL_STATUSES]
@@ -56,6 +57,13 @@ def _summarize(
     tools = [tool for run in runs for tool in tools_by_run.get(run.id, [])]
     tool_budget = sum(goal.tool_call_budget for goal in goals if goal.kind == "agent")
     failed_tools = sum(tool.status == "failed" for tool in tools)
+    feedback = [feedback_by_run[run.id] for run in runs if run.id in feedback_by_run]
+    positive_feedback = sum(item.rating == "positive" for item in feedback)
+    negative_reasons = Counter(
+        item.reason
+        for item in feedback
+        if item.rating == "negative" and item.reason
+    )
     return {
         "run_count": len(runs),
         "terminal_run_count": len(terminal_runs),
@@ -78,6 +86,11 @@ def _summarize(
         "tool_failure_rate": _percent(failed_tools, len(tools)),
         "tool_call_budget": tool_budget,
         "tool_budget_utilization": _percent(len(tools), tool_budget),
+        "rated_run_count": len(feedback),
+        "positive_feedback_count": positive_feedback,
+        "negative_feedback_count": len(feedback) - positive_feedback,
+        "user_satisfaction_rate": _percent(positive_feedback, len(feedback)),
+        "negative_reason_counts": dict(negative_reasons),
     }
 
 
@@ -85,6 +98,7 @@ def build_routing_analytics(
     runs: list[AgentRun],
     goals: list[GoalNode],
     tools: list[ToolExecution],
+    feedback: list[AgentRunFeedback] | None = None,
 ) -> dict[str, Any]:
     goals_by_run: dict[str, list[GoalNode]] = defaultdict(list)
     tools_by_run: dict[str, list[ToolExecution]] = defaultdict(list)
@@ -92,6 +106,7 @@ def build_routing_analytics(
         goals_by_run[goal.run_id].append(goal)
     for tool in tools:
         tools_by_run[tool.run_id].append(tool)
+    feedback_by_run = {item.run_id: item for item in feedback or []}
 
     grouped_runs: dict[tuple[str, str, str], list[AgentRun]] = defaultdict(list)
     for run in runs:
@@ -103,12 +118,12 @@ def build_routing_analytics(
             "tier": tier,
             "route": route,
             "planning_source": source,
-            **_summarize(group, goals_by_run, tools_by_run),
+            **_summarize(group, goals_by_run, tools_by_run, feedback_by_run),
         }
         for (tier, route, source), group in grouped_runs.items()
     ]
     groups.sort(key=lambda item: (-item["run_count"], item["tier"], item["route"]))
-    summary = _summarize(runs, goals_by_run, tools_by_run)
+    summary = _summarize(runs, goals_by_run, tools_by_run, feedback_by_run)
     summary["tier_counts"] = {
         tier: sum(run.route_tier == tier for run in runs)
         for tier in ("fast", "standard", "expert")

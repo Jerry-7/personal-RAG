@@ -8,10 +8,19 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
-from app.api.research import get_research_run, get_routing_analytics, list_research_runs
+from fastapi import HTTPException
+
+from app.api.research import (
+    delete_run_feedback,
+    get_research_run,
+    get_routing_analytics,
+    list_research_runs,
+    update_run_feedback,
+)
 from app.db.database import Base
 from app.db.models import AgentRun, Conversation, ToolExecution
 from app.services.goal_runtime import GoalRuntime
+from app.schemas.research import RunFeedbackUpdate
 
 
 class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
@@ -163,6 +172,46 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(expert["planning_source"], "model")
         self.assertEqual(expert["operational_success_rate"], 100.0)
 
+    async def test_feedback_lifecycle_updates_run_and_routing_quality(self):
+        positive = await update_run_feedback(
+            self.run.id,
+            RunFeedbackUpdate(rating="positive"),
+            self.db,
+        )
+        self.assertEqual(positive["rating"], "positive")
+        self.assertIsNone(positive["reason"])
+
+        negative = await update_run_feedback(
+            self.run.id,
+            RunFeedbackUpdate(rating="negative", reason="missing_evidence"),
+            self.db,
+        )
+        self.assertEqual(negative["reason"], "missing_evidence")
+
+        detail = await get_research_run(self.run.id, self.db)
+        listed = await list_research_runs(self.conversation.id, 20, self.db)
+        analytics = await get_routing_analytics(None, 200, self.db)
+        self.assertEqual(detail["feedback"]["rating"], "negative")
+        self.assertEqual(listed["runs"][1]["feedback"]["reason"], "missing_evidence")
+        self.assertEqual(analytics["summary"]["rated_run_count"], 1)
+        self.assertEqual(analytics["summary"]["user_satisfaction_rate"], 0.0)
+        self.assertEqual(
+            analytics["summary"]["negative_reason_counts"],
+            {"missing_evidence": 1},
+        )
+
+        removed = await delete_run_feedback(self.run.id, self.db)
+        self.assertEqual(removed, {"status": "removed"})
+        self.assertIsNone((await get_research_run(self.run.id, self.db))["feedback"])
+
+        with self.assertRaises(HTTPException) as context:
+            await update_run_feedback(
+                self.retry.id,
+                RunFeedbackUpdate(rating="positive"),
+                self.db,
+            )
+        self.assertEqual(context.exception.status_code, 409)
+
 
 class ModelRoutingMigrationTests(unittest.TestCase):
     def test_model_routing_migration_backfills_runs_and_goals(self):
@@ -283,4 +332,42 @@ class RouteHierarchyLimitMigrationTests(unittest.TestCase):
                 ("fast", 0, 0),
                 ("standard", 1, 1),
             ])
+        engine.dispose()
+
+
+class AgentRunFeedbackMigrationTests(unittest.TestCase):
+    def test_feedback_migration_is_idempotent(self):
+        engine = create_engine("sqlite:///:memory:")
+        migration_path = (
+            Path(__file__).parents[1]
+            / "alembic"
+            / "versions"
+            / "20260815_07_agent_run_feedback.py"
+        )
+        spec = importlib.util.spec_from_file_location("feedback_migration", migration_path)
+        assert spec and spec.loader
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE agent_runs (id VARCHAR(36) PRIMARY KEY)"
+            ))
+            connection.execute(text("INSERT INTO agent_runs VALUES ('run')"))
+            migration.op = Operations(MigrationContext.configure(connection))
+            migration.upgrade()
+            migration.upgrade()
+            connection.execute(text(
+                "INSERT INTO agent_run_feedback (run_id, rating, reason) "
+                "VALUES ('run', 'negative', 'incorrect')"
+            ))
+
+            feedback = connection.execute(text(
+                "SELECT rating, reason FROM agent_run_feedback WHERE run_id = 'run'"
+            )).one()
+            self.assertEqual(tuple(feedback), ("negative", "incorrect"))
+            self.assertEqual(
+                {column["name"] for column in inspect(connection).get_columns("agent_run_feedback")},
+                {"run_id", "rating", "reason", "created_at", "updated_at"},
+            )
         engine.dispose()
