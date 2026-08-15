@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import re
 from collections.abc import AsyncGenerator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+from sqlalchemy.orm import Session
 
 from app.agent.context import AgentRunContext
 from app.agent.loop import AgentLoop
 from app.agent.routing import AgentProfile, AgentRegistry
+from app.db.database import SessionLocal
 from app.db.models import GoalNode
 from app.providers.base import LLMProvider
 from app.services.goal_runtime import GoalRuntime, serialize_event
@@ -23,14 +28,27 @@ class WorkerSpec:
 
 
 AgentFactory = Callable[[AgentProfile], Any]
+SessionFactory = Callable[[], Session]
+
+
+@dataclass
+class WorkerResult:
+    spec: WorkerSpec
+    goal: GoalNode
+    report: str = ""
+    error_message: str = ""
+    cancelled: bool = False
+    citations: list[dict[str, Any]] = field(default_factory=list)
+    web_pages_used: int = 0
+    visited_urls: set[str] = field(default_factory=set)
 
 
 class Supervisor:
     """Execute a bounded multi-Agent plan and synthesize worker reports.
 
-    Workers run sequentially in this first implementation because they share a
-    request-scoped SQLAlchemy session and citation registry.  The goal graph and
-    contracts are compatible with a later parallel scheduler.
+    Research workers run concurrently with isolated database sessions and
+    citation registries. Goal transitions and shared-state merges remain on the
+    supervisor task so request-scoped SQLAlchemy state is never used concurrently.
     """
 
     def __init__(
@@ -42,6 +60,7 @@ class Supervisor:
         parent_goal: GoalNode,
         context: AgentRunContext,
         agent_factory: AgentFactory | None = None,
+        session_factory: SessionFactory | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -49,6 +68,7 @@ class Supervisor:
         self.parent_goal = parent_goal
         self.context = context
         self.agent_factory = agent_factory or self._default_agent_factory
+        self.session_factory = session_factory or SessionLocal
 
     async def run(
         self,
@@ -71,9 +91,8 @@ class Supervisor:
             supervisor_profile = self.registry.require(self.parent_goal.agent_profile)
             max_workers = max(0, supervisor_profile.max_children - 1)
             plan = self._build_plan(mode)[:max_workers]
+            worker_entries: list[tuple[WorkerSpec, AgentProfile, GoalNode]] = []
             for spec in plan:
-                if self.context.is_cancelled():
-                    return
                 profile = self.registry.for_role(spec.role)
                 goal, events = self.goal_runtime.create_child(
                     parent=self.parent_goal,
@@ -83,56 +102,66 @@ class Supervisor:
                     input_data={"question": question, "mode": spec.mode, "role": spec.role},
                 )
                 worker_goal_ids.append(goal.id)
+                worker_entries.append((spec, profile, goal))
                 for event in events:
                     yield self._event(event)
 
-                self._select_context(goal, profile, spec.mode)
-                report = ""
-                error_message = ""
-                try:
-                    agent = self.agent_factory(profile)
-                    async for event in agent.run(
-                        question=self._worker_question(question, spec),
-                        conversation_id=self.context.conversation_id,
+            queue: asyncio.Queue[tuple[str, int, Any]] = asyncio.Queue()
+            tasks = [
+                asyncio.create_task(
+                    self._run_worker(
+                        index=index,
+                        spec=spec,
+                        profile=profile,
+                        goal=goal,
+                        question=question,
                         chat_history=chat_history,
-                        context=self.context,
-                    ):
-                        event_type = event.get("event", "")
-                        data = event.get("data", "")
-                        if event_type == "token":
-                            report += data if isinstance(data, str) else str(data.get("text", ""))
-                        elif event_type == "citation":
-                            continue
-                        elif event_type == "error":
-                            error_message = (
-                                str(data.get("message", "Worker failed"))
-                                if isinstance(data, dict) else str(data)
-                            )
-                        else:
-                            yield event
-                except Exception as exc:
-                    error_message = str(exc)
+                        queue=queue,
+                        worker_count=max(1, len(worker_entries)),
+                    )
+                )
+                for index, (spec, profile, goal) in enumerate(worker_entries)
+            ]
+            completed = 0
+            results_by_index: dict[int, WorkerResult] = {}
+            try:
+                while completed < len(tasks):
+                    kind, index, payload = await queue.get()
+                    if kind == "event":
+                        yield payload
+                        continue
 
-                if self.context.is_cancelled():
-                    transition = self.goal_runtime.transition(goal, "cancelled")
+                    result: WorkerResult = payload
+                    completed += 1
+                    results_by_index[index] = result
+                    if result.cancelled:
+                        transition = self.goal_runtime.transition(result.goal, "cancelled")
+                    elif result.error_message or not result.report.strip():
+                        result.error_message = result.error_message or "Worker returned no report"
+                        transition = self.goal_runtime.transition(
+                            result.goal,
+                            "failed",
+                            output={"report": result.report[:12000]},
+                            error_message=result.error_message,
+                        )
+                    else:
+                        transition = self.goal_runtime.transition(
+                            result.goal,
+                            "completed",
+                            output={"report": result.report[:12000]},
+                        )
                     yield self._event(transition)
-                    return
-                if error_message or not report.strip():
-                    error_message = error_message or "Worker returned no report"
-                    transition = self.goal_runtime.transition(
-                        goal,
-                        "failed",
-                        output={"report": report[:12000]},
-                        error_message=error_message,
-                    )
-                else:
-                    transition = self.goal_runtime.transition(
-                        goal,
-                        "completed",
-                        output={"report": report[:12000]},
-                    )
-                yield self._event(transition)
-                reports.append((spec, report[:12000], error_message))
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+            for index in range(len(worker_entries)):
+                result = results_by_index[index]
+                citation_map = self._merge_worker_state(result)
+                report = self._remap_citations(result.report, citation_map)
+                reports.append((result.spec, report[:12000], result.error_message))
 
             if self.context.is_cancelled():
                 return
@@ -197,6 +226,96 @@ class Supervisor:
                 self.context.tool_call_budget,
                 self.context.allowed_tool_sources,
             ) = original_state
+
+    async def _run_worker(
+        self,
+        *,
+        index: int,
+        spec: WorkerSpec,
+        profile: AgentProfile,
+        goal: GoalNode,
+        question: str,
+        chat_history: list[dict[str, str]] | None,
+        queue: asyncio.Queue[tuple[str, int, Any]],
+        worker_count: int,
+    ) -> None:
+        worker_db: Session | None = None
+        worker_context: AgentRunContext | None = None
+        result = WorkerResult(spec=spec, goal=goal)
+        try:
+            worker_db = self.session_factory()
+            worker_context = AgentRunContext(
+                db=worker_db,
+                conversation_id=self.context.conversation_id,
+                run_id=self.context.run_id,
+                goal_node_id=goal.id,
+                mode=spec.mode,
+                allowed_tool_sources=profile.allowed_tool_sources,
+                agent_profile=profile.name,
+                tool_call_budget=profile.tool_call_budget,
+                cancellation_event=self.context.cancellation_event,
+                web_page_budget=self.context.web_page_budget if spec.mode == "web" else 0,
+                max_crawl_depth=self.context.max_crawl_depth,
+                max_tool_output_chars=max(
+                    4000, self.context.max_tool_output_chars // worker_count
+                ),
+            )
+            agent = self.agent_factory(profile)
+            async for event in agent.run(
+                question=self._worker_question(question, spec),
+                conversation_id=self.context.conversation_id,
+                chat_history=chat_history,
+                context=worker_context,
+            ):
+                event_type = event.get("event", "")
+                data = event.get("data", "")
+                if event_type == "token":
+                    result.report += (
+                        data if isinstance(data, str) else str(data.get("text", ""))
+                    )
+                elif event_type == "citation":
+                    continue
+                elif event_type == "error":
+                    result.error_message = (
+                        str(data.get("message", "Worker failed"))
+                        if isinstance(data, dict) else str(data)
+                    )
+                else:
+                    await queue.put(("event", index, event))
+            result.cancelled = worker_context.is_cancelled()
+        except asyncio.CancelledError:
+            result.cancelled = True
+        except Exception as exc:
+            result.error_message = str(exc)
+        finally:
+            if worker_context is not None:
+                result.citations = list(worker_context.citations)
+                result.web_pages_used = worker_context.web_pages_used
+                result.visited_urls = set(worker_context.visited_urls)
+            if worker_db is not None:
+                worker_db.close()
+            await queue.put(("done", index, result))
+
+    def _merge_worker_state(self, result: WorkerResult) -> dict[int, int]:
+        citation_map: dict[int, int] = {}
+        for citation in result.citations:
+            local_index = citation["index"]
+            self.context.citation_counter += 1
+            global_index = self.context.citation_counter
+            self.context.citations.append({**citation, "index": global_index})
+            citation_map[local_index] = global_index
+        self.context.web_pages_used += result.web_pages_used
+        self.context.visited_urls.update(result.visited_urls)
+        return citation_map
+
+    @staticmethod
+    def _remap_citations(report: str, citation_map: dict[int, int]) -> str:
+        def replace(match: re.Match[str]) -> str:
+            local_index = int(match.group(1))
+            global_index = citation_map.get(local_index)
+            return f"[{global_index}]" if global_index is not None else match.group(0)
+
+        return re.sub(r"\[(\d+)]", replace, report)
 
     def _default_agent_factory(self, profile: AgentProfile) -> AgentLoop:
         return AgentLoop(provider=self.provider, max_iterations=profile.max_iterations)

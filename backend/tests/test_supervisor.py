@@ -1,3 +1,4 @@
+import asyncio
 import json
 import unittest
 
@@ -31,11 +32,42 @@ class FakeAgent:
         yield {"event": "token", "data": f"{self.profile.role} evidence [1]"}
 
 
+class ConcurrentCitationAgent:
+    def __init__(self, profile: AgentProfile, state: dict) -> None:
+        self.profile = profile
+        self.state = state
+
+    async def run(self, **kwargs):
+        if self.profile.role == "synthesizer":
+            self.state["synthesis_question"] = kwargs["question"]
+            yield {"event": "token", "data": "final answer [1] [2]"}
+            return
+
+        self.state["active"] += 1
+        self.state["max_active"] = max(
+            self.state["max_active"], self.state["active"]
+        )
+        try:
+            await asyncio.sleep(0.02)
+            context = kwargs["context"]
+            index = context.register_source({
+                "source_type": self.profile.role,
+                "snippet": f"{self.profile.role} source",
+            })
+            yield {
+                "event": "token",
+                "data": f"{self.profile.role} evidence [{index}]",
+            }
+        finally:
+            self.state["active"] -= 1
+
+
 class SupervisorTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(self.engine)
-        self.db = sessionmaker(bind=self.engine)()
+        self.session_factory = sessionmaker(bind=self.engine)
+        self.db = self.session_factory()
         self.runtime = GoalRuntime(self.db, "run-supervisor")
         self.root, _ = self.runtime.create_root(
             title="复杂研究",
@@ -72,6 +104,7 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
             parent_goal=self.parent,
             context=self.context,
             agent_factory=lambda profile: FakeAgent(profile),
+            session_factory=self.session_factory,
         )
 
         events = [
@@ -108,6 +141,7 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
             parent_goal=self.parent,
             context=self.context,
             agent_factory=lambda profile: FakeAgent(profile, fail_role="retriever"),
+            session_factory=self.session_factory,
         )
 
         events = [
@@ -121,3 +155,40 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status_by_profile["web_researcher"], "completed")
         self.assertEqual(status_by_profile["expert_synthesizer"], "completed")
         self.assertFalse(any(event["event"] == "error" for event in events))
+
+    async def test_workers_overlap_and_citations_are_remapped_in_plan_order(self):
+        state = {
+            "active": 0,
+            "max_active": 0,
+            "synthesis_question": "",
+        }
+        supervisor = Supervisor(
+            provider=object(),  # type: ignore[arg-type]
+            registry=build_default_agent_registry(),
+            goal_runtime=self.runtime,
+            parent_goal=self.parent,
+            context=self.context,
+            agent_factory=lambda profile: ConcurrentCitationAgent(profile, state),
+            session_factory=self.session_factory,
+        )
+
+        events = [
+            event
+            async for event in supervisor.run(question="并行研究", mode="auto")
+        ]
+
+        self.assertEqual(state["max_active"], 2)
+        self.assertIn("retriever evidence [1]", state["synthesis_question"])
+        self.assertIn("web_researcher evidence [2]", state["synthesis_question"])
+        self.assertEqual(
+            [citation["index"] for citation in self.context.citations],
+            [1, 2],
+        )
+        self.assertIn(
+            "final answer [1] [2]",
+            "".join(
+                str(event.get("data", ""))
+                for event in events
+                if event["event"] == "token"
+            ),
+        )
