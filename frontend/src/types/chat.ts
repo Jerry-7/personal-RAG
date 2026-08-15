@@ -49,6 +49,8 @@ export type SSEEventType =
   | 'goal_completed'
   | 'goal_failed'
   | 'goal_cancelled'
+  | 'context_compressed'
+  | 'context_compression_failed'
   | 'source'
   | 'note_draft';
 

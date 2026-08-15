@@ -14,6 +14,7 @@ import {
   History,
   Loader2,
   Lightbulb,
+  Minimize2,
   Pause,
   Play,
   Route,
@@ -36,6 +37,7 @@ import type {
   AgentStep,
   GoalNodeData,
   RoutingRecommendationAction,
+  RunEventData,
 } from '../../types/chat';
 
 const toolLabels: Record<string, string> = {
@@ -205,6 +207,41 @@ function ToolActivity({ step }: { step: AgentStep }) {
   );
 }
 
+const compressionScopeLabels: Record<string, string> = {
+  input_rewrite: '输入重写上下文',
+  supervisor_planning: 'Supervisor 规划上下文',
+  agent_messages: 'Agent 消息上下文',
+  tool_result: '工具结果',
+  conversation_memory: '对话记忆',
+};
+
+function CompressionActivity({ event }: { event: RunEventData }) {
+  const failed = event.type === 'context_compression_failed';
+  const scope = String(event.payload.scope || 'context');
+  const originalTokens = Number(event.payload.original_tokens || 0);
+  const compressedTokens = Number(event.payload.compressed_tokens || 0);
+  const message = String(event.payload.message || '上下文压缩失败');
+
+  return (
+    <div className={`flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] ${failed ? 'text-red-500' : 'text-gray-400'}`}>
+      {failed
+        ? <XCircle className="h-3.5 w-3.5 shrink-0" />
+        : <Minimize2 className="h-3.5 w-3.5 shrink-0 text-teal-600" />}
+      <span className="font-medium text-gray-600 dark:text-gray-300">
+        {compressionScopeLabels[scope] || scope}
+      </span>
+      {failed ? (
+        <span className="min-w-0 break-words">{message}</span>
+      ) : (
+        <>
+          <span className="tabular-nums">{originalTokens.toLocaleString()} → {compressedTokens.toLocaleString()} tokens</span>
+          <span className="tabular-nums">{Number(event.payload.calls || 0)} 次压缩调用</span>
+        </>
+      )}
+    </div>
+  );
+}
+
 interface GoalBranchProps {
   goal: GoalNodeData;
   goals: GoalNodeData[];
@@ -310,6 +347,7 @@ export function ActivityTimeline() {
   const runHistory = useChatStore((state) => state.runHistory);
   const runSnapshot = useChatStore((state) => state.runSnapshot);
   const routingAnalytics = useChatStore((state) => state.routingAnalytics);
+  const runEvents = useChatStore((state) => state.runEvents);
 
   if (!steps.length && !routeSelection && !goalNodes.length && !runSnapshot && !runHistory.length) return null;
 
@@ -325,7 +363,10 @@ export function ActivityTimeline() {
       && (runSnapshot?.retryable
         ?? roots.some((goal) => goal.status === 'failed' || goal.status === 'cancelled'))
   );
-  const activityCount = steps.length + goalNodes.length + (routeSelection ? 1 : 0);
+  const compressionEvents = runEvents.filter((event) => (
+    event.type === 'context_compressed' || event.type === 'context_compression_failed'
+  ));
+  const activityCount = steps.length + goalNodes.length + compressionEvents.length + (routeSelection ? 1 : 0);
   const terminalGoalCount = goalNodes.filter((goal) =>
     goal.status === 'completed' || goal.status === 'failed' || goal.status === 'cancelled'
   ).length;
@@ -683,6 +724,14 @@ export function ActivityTimeline() {
                   层级 {observedMaxDepth}/{routeSelection.max_depth} · 分支 {observedMaxChildren}/{routeSelection.max_children}
                 </span>
               </div>
+            </div>
+          )}
+
+          {!!compressionEvents.length && (
+            <div className="space-y-0.5 border-l border-gray-200 pl-4 dark:border-gray-700">
+              {compressionEvents.map((event) => (
+                <CompressionActivity key={event.event_id} event={event} />
+              ))}
             </div>
           )}
 

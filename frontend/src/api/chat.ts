@@ -98,6 +98,8 @@ function streamChatRequest(
                 case 'goal_completed':
                 case 'goal_failed':
                 case 'goal_cancelled':
+                case 'context_compressed':
+                case 'context_compression_failed':
                   callbacks.onGoalEvent?.(data as unknown as RunEventData);
                   break;
                 case 'source':
