@@ -39,9 +39,13 @@ async def lifespan(app: FastAPI):
 
     from app.db.database import SessionLocal
     from app.services.index_consistency import repair_vector_index
+    from app.services.run_recovery import recover_interrupted_agent_runs
     from app.services.runtime_settings import load_persisted_settings
     with SessionLocal() as db:
         load_persisted_settings(db)
+        interrupted_runs = recover_interrupted_agent_runs(db)
+        if interrupted_runs:
+            print(f" 已收敛 {interrupted_runs} 个中断的 Agent 运行")
         repair_result = repair_vector_index(db)
         if any(repair_result.values()):
             print(f" 向量索引一致性修复: {repair_result}")

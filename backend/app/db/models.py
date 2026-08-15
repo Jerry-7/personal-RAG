@@ -240,6 +240,10 @@ class AgentRun(Base):
     )
     user_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     assistant_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    retry_of_run_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("agent_runs.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
     mode: Mapped[str] = mapped_column(String(16), nullable=False, default="auto")
     agent_profile: Mapped[str] = mapped_column(String(64), nullable=False, default="standard_research")
     route_tier: Mapped[str] = mapped_column(String(16), nullable=False, default="standard")

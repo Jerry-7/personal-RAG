@@ -16,6 +16,10 @@ async def get_research_run(run_id: str, db: Session = Depends(get_db)):
     run = db.query(AgentRun).filter(AgentRun.id == run_id).first()
     if not run:
         raise HTTPException(status_code=404, detail="研究运行不存在")
+    has_active_run = db.query(AgentRun.id).filter(
+        AgentRun.conversation_id == run.conversation_id,
+        AgentRun.status == "running",
+    ).first() is not None
     executions = db.query(ToolExecution).filter(ToolExecution.run_id == run_id).order_by(ToolExecution.created_at).all()
     goals = db.query(GoalNode).filter(GoalNode.run_id == run_id).order_by(GoalNode.sequence).all()
     events = db.query(RunEvent).filter(RunEvent.run_id == run_id).order_by(RunEvent.sequence).all()
@@ -25,6 +29,11 @@ async def get_research_run(run_id: str, db: Session = Depends(get_db)):
     )
     return {
         "id": run.id,
+        "retry_of_run_id": run.retry_of_run_id,
+        "retryable": (
+            run.status in {"failed", "cancelled", "interrupted"}
+            and not has_active_run
+        ),
         "conversation_id": run.conversation_id,
         "mode": run.mode,
         "routing": {

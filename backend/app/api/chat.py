@@ -34,6 +34,13 @@ STREAM_CHARACTER_DELAY_SECONDS = 0.006
 _cancellation_flags: dict[str, asyncio.Event] = {}
 
 
+def _stream_error(message: str) -> EventSourceResponse:
+    async def generate_error():
+        yield {"event": "error", "data": json.dumps({"message": message})}
+
+    return EventSourceResponse(generate_error())
+
+
 @router.post("/chat/query")
 async def chat_query(
     request: Request,
@@ -48,6 +55,7 @@ async def chat_query(
     Request body (JSON):
         - question: str  用户问题
         - conversation_id: str|null  已有对话 ID，None 则创建新对话
+        - retry_run_id: str|null  失败、中断或取消的运行 ID；提供时复用原问题
 
     SSE events:
         - event: token    data: {"text": "..."}
@@ -67,68 +75,87 @@ async def chat_query(
     except Exception:
         pass
 
-    question = body.get("question", "").strip()
-    if not question:
-        async def _error_gen():
-            yield {"event": "error", "data": json.dumps({"message": "问题不能为空"})}
-        return EventSourceResponse(_error_gen())
+    retry_run_id = str(body.get("retry_run_id") or "").strip() or None
+    if retry_run_id:
+        from app.services.run_recovery import resolve_retry_source
 
-    conversation_id = body.get("conversation_id")
-    mode = body.get("mode", "auto")
-    if mode not in {"auto", "local", "web"}:
-        async def _mode_error_gen():
-            yield {"event": "error", "data": json.dumps({"message": "mode 必须是 auto、local 或 web"})}
-        return EventSourceResponse(_mode_error_gen())
-
-    # ── 创建或获取对话 ──────────────────────────────────────
-    if conversation_id:
-        conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+        try:
+            retry_source = resolve_retry_source(db, retry_run_id)
+        except (LookupError, ValueError) as exc:
+            return _stream_error(str(exc))
+        question = retry_source.user_message.content.strip()
+        conversation_id = retry_source.conversation.id
+        mode = retry_source.run.mode
+        conv = retry_source.conversation
+        user_msg = retry_source.user_message
+        chat_history = conversation_memory.get_context_before(
+            db,
+            conversation_id,
+            user_msg,
+        )
     else:
-        conv = None
-    # 创建新对话
-    if not conv:
-        llm_model = {
-            "openai": settings.openai_llm_model,
-            "anthropic": settings.anthropic_llm_model,
-        }.get(settings.llm_provider, settings.ollama_llm_model)
-        embedding_model = (
-            settings.openai_embedding_model
-            if settings.embedding_provider == "openai"
-            else settings.ollama_embedding_model
-        )
-        conv = Conversation(
+        question = str(body.get("question") or "").strip()
+        if not question:
+            return _stream_error("问题不能为空")
+
+        conversation_id = body.get("conversation_id")
+        mode = body.get("mode", "auto")
+        if mode not in {"auto", "local", "web"}:
+            return _stream_error("mode 必须是 auto、local 或 web")
+
+        # ── 创建或获取对话 ──────────────────────────────────
+        if conversation_id:
+            conv = db.query(Conversation).filter(
+                Conversation.id == conversation_id
+            ).first()
+        else:
+            conv = None
+        if not conv:
+            llm_model = {
+                "openai": settings.openai_llm_model,
+                "anthropic": settings.anthropic_llm_model,
+            }.get(settings.llm_provider, settings.ollama_llm_model)
+            embedding_model = (
+                settings.openai_embedding_model
+                if settings.embedding_provider == "openai"
+                else settings.ollama_embedding_model
+            )
+            conv = Conversation(
+                id=str(uuid.uuid4()),
+                title=question[:80],
+                model_provider=settings.llm_provider,
+                model_name=llm_model,
+                embedding_provider=settings.embedding_provider,
+                embedding_model=embedding_model,
+            )
+            db.add(conv)
+            db.commit()
+            conversation_id = conv.id
+
+        user_msg = Message(
             id=str(uuid.uuid4()),
-            title=question[:80],
-            model_provider=settings.llm_provider,
-            model_name=llm_model,
-            embedding_provider=settings.embedding_provider,
-            embedding_model=embedding_model,
+            conversation_id=conversation_id,
+            role="user",
+            content=question,
         )
-        db.add(conv)
+        db.add(user_msg)
         db.commit()
-        conversation_id = conv.id
-
-    # 保存用户消息
-    user_msg = Message(
-        id=str(uuid.uuid4()),
-        conversation_id=conversation_id,
-        role="user",
-        content=question,
-    )
-    db.add(user_msg)
-    db.commit()
-
-    # ── 加载历史对话（供 LLM 上下文） ──────────────────────────
-    # 查询该对话的历史消息（按时间升序），转换为 [{role, content}, ...]
-    chat_history = conversation_memory.get_context(
-        db, conversation_id, exclude_message_id=user_msg.id
-    )
+        chat_history = conversation_memory.get_context(
+            db, conversation_id, exclude_message_id=user_msg.id
+        )
 
     _cancellation_flags[conversation_id] = asyncio.Event()
 
     # ── 启动 Agent ────────────────────────────────────────────
     stream = _agent_event_generator(
-        question, conversation_id, db, conv, chat_history, mode, user_msg.id
+        question,
+        conversation_id,
+        db,
+        conv,
+        chat_history,
+        mode,
+        user_msg.id,
+        retry_of_run_id=retry_run_id,
     )
 
     return EventSourceResponse(stream)
@@ -142,6 +169,7 @@ async def _agent_event_generator(
     chat_history: list[dict[str, str]],
     mode: str,
     user_message_id: str,
+    retry_of_run_id: str | None = None,
 ):
     """
     Agent 模式事件生成器。
@@ -168,6 +196,7 @@ async def _agent_event_generator(
     agent_run = AgentRun(
         conversation_id=conversation_id,
         user_message_id=user_message_id,
+        retry_of_run_id=retry_of_run_id,
         mode=mode,
         agent_profile=agent_profile.name,
         route_tier=route_decision.tier,
@@ -230,6 +259,7 @@ async def _agent_event_generator(
             "event": "run_started",
             "data": json.dumps({
                 "run_id": agent_run.id,
+                "retry_of_run_id": retry_of_run_id,
                 "conversation_id": conversation_id,
                 "mode": mode,
                 "web_page_budget": agent_run.web_page_budget,

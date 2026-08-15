@@ -13,8 +13,10 @@ from pydantic import BaseModel, Field
 
 class ChatQueryRequest(BaseModel):
     """聊天查询请求模型。"""
-    question: str = Field(..., description="用户问题", min_length=1, max_length=10000)
+    question: Optional[str] = Field(None, description="用户问题", min_length=1, max_length=10000)
     conversation_id: Optional[str] = Field(None, description="已有对话 ID，不提供则创建新对话")
+    retry_run_id: Optional[str] = Field(None, description="需要重新执行的失败或中断运行 ID")
+    mode: str = Field("auto", description="执行模式: auto | local | web")
     top_k: int = Field(4, description="检索的分块数量", ge=1, le=20)
 
 

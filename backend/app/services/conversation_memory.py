@@ -28,6 +28,40 @@ class ConversationMemoryService:
         context.extend({"role": message.role, "content": message.content} for message in messages)
         return context
 
+    def get_context_before(
+        self,
+        db: Session,
+        conversation_id: str,
+        before_message: Message,
+    ) -> list[dict[str, str]]:
+        """Rebuild context as it existed immediately before a stored message."""
+        messages = (
+            db.query(Message)
+            .filter(
+                Message.conversation_id == conversation_id,
+                Message.created_at < before_message.created_at,
+            )
+            .order_by(Message.created_at.asc())
+            .all()
+        )
+        summary = db.query(ConversationSummary).filter_by(
+            conversation_id=conversation_id
+        ).first()
+        context: list[dict[str, str]] = []
+        if summary and summary.summary:
+            ids = [message.id for message in messages]
+            if summary.through_message_id in ids:
+                context.append({
+                    "role": "system",
+                    "content": f"Earlier conversation summary:\n{summary.summary}",
+                })
+                messages = messages[ids.index(summary.through_message_id) + 1:]
+        context.extend(
+            {"role": message.role, "content": message.content}
+            for message in messages[-self.recent_message_count:]
+        )
+        return context
+
     def update_summary(self, db: Session, conversation_id: str) -> ConversationSummary | None:
         messages = (
             db.query(Message).filter(Message.conversation_id == conversation_id)
