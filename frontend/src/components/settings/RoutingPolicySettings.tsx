@@ -3,9 +3,16 @@ import { Check, Loader2, RotateCcw, Save } from 'lucide-react';
 import {
   createRoutingPolicy,
   getRoutingPolicies,
+  getRoutingPolicyEvaluation,
   rollbackRoutingPolicy,
+  simulateRoutingPolicy,
 } from '../../api/routingPolicies';
-import type { RoutingPolicyReport } from '../../types/routingPolicy';
+import type {
+  RoutingPolicyEvaluation,
+  RoutingPolicyReport,
+  RoutingPolicySimulation,
+} from '../../types/routingPolicy';
+import { RoutingPolicyEvaluationPanel } from './RoutingPolicyEvaluationPanel';
 
 
 const sourceLabels = {
@@ -26,18 +33,40 @@ function formatCreatedAt(value: string | null): string {
 
 export function RoutingPolicySettings() {
   const [report, setReport] = useState<RoutingPolicyReport | null>(null);
+  const [evaluation, setEvaluation] = useState<RoutingPolicyEvaluation | null>(null);
+  const [simulation, setSimulation] = useState<RoutingPolicySimulation | null>(null);
   const [standardMin, setStandardMin] = useState(2);
   const [expertMin, setExpertMin] = useState(4);
   const [note, setNote] = useState('');
   const [pending, setPending] = useState<'create' | number | null>(null);
+  const [isSimulating, setIsSimulating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const refresh = async () => {
-    const next = await getRoutingPolicies();
+    const [next, nextEvaluation] = await Promise.all([
+      getRoutingPolicies(),
+      getRoutingPolicyEvaluation(),
+    ]);
     setReport(next);
+    setEvaluation(nextEvaluation);
+    setSimulation(nextEvaluation.simulation);
     setStandardMin(next.current.standard_min_score);
     setExpertMin(next.current.expert_min_score);
     return next;
+  };
+
+  const simulate = async () => {
+    if (!valid || isSimulating) return;
+    setIsSimulating(true);
+    setMessage(null);
+    try {
+      setSimulation(await simulateRoutingPolicy(standardMin, expertMin));
+    } catch (error) {
+      console.error('模拟路由策略失败', error);
+      setMessage('模拟失败，请检查阈值和服务状态');
+    } finally {
+      setIsSimulating(false);
+    }
   };
 
   useEffect(() => {
@@ -183,6 +212,14 @@ export function RoutingPolicySettings() {
         </div>
         {message && <p className="text-xs text-gray-500">{message}</p>}
       </section>
+
+      <RoutingPolicyEvaluationPanel
+        evaluation={evaluation}
+        simulation={simulation}
+        isSimulating={isSimulating}
+        canSimulate={valid}
+        onSimulate={simulate}
+      />
 
       <section>
         <h3 className="mb-2 text-xs font-medium text-gray-500">版本历史</h3>
