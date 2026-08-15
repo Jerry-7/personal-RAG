@@ -100,6 +100,24 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         runtime.transition(worker, "completed")
         runtime.transition(primary, "completed")
         runtime.transition(root, "completed")
+        runtime.record_runtime_event(
+            "context_compressed",
+            {
+                "scope": "agent_messages",
+                "original_tokens": 10000,
+                "compressed_tokens": 2500,
+                "calls": 4,
+            },
+            node_id=primary.id,
+        )
+        runtime.record_runtime_event(
+            "context_compression_failed",
+            {
+                "scope": "conversation_memory",
+                "message": "provider unavailable",
+            },
+            node_id=primary.id,
+        )
         self.retry = AgentRun(
             id="observable-retry",
             conversation_id=self.conversation.id,
@@ -130,6 +148,11 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source_summary["metrics"]["progress_percent"], 100)
         self.assertEqual(source_summary["metrics"]["goals_pending"], 0)
         self.assertEqual(source_summary["metrics"]["goal_retry_attempts"], 0)
+        self.assertEqual(source_summary["metrics"]["context_compressions"], 1)
+        self.assertEqual(source_summary["metrics"]["context_compression_failures"], 1)
+        self.assertEqual(source_summary["metrics"]["context_compression_calls"], 4)
+        self.assertEqual(source_summary["metrics"]["context_tokens_saved"], 7500)
+        self.assertEqual(source_summary["metrics"]["context_compression_ratio"], 75.0)
         self.assertEqual(source_summary["routing"]["route"], "supervisor")
         self.assertEqual(source_summary["routing"]["max_children"], 4)
         self.assertEqual(source_summary["routing"]["max_depth"], 2)
@@ -143,6 +166,8 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(detail["retryable"])
         self.assertEqual(detail["metrics"]["duration_ms"], 2000)
         self.assertEqual(detail["metrics"]["tool_duration_ms"], 125)
+        self.assertEqual(detail["metrics"]["context_original_tokens"], 10000)
+        self.assertEqual(detail["metrics"]["context_compressed_tokens"], 2500)
         self.assertEqual(detail["goals"][2]["tool_call_budget"], 7)
         self.assertEqual(detail["goals"][2]["model_name"], "standard-model")
         self.assertEqual(detail["tools"][0]["name"], "web_search")

@@ -80,10 +80,45 @@ def _tree_shape(goals: list[GoalNode]) -> tuple[int, int]:
     return max(children.values(), default=0), max_depth
 
 
+def _compression_metrics(events: list[RunEvent]) -> dict[str, int | float]:
+    compressed_count = 0
+    failure_count = 0
+    agent_calls = 0
+    original_tokens = 0
+    compressed_tokens = 0
+    for event in events:
+        if event.event_type == "context_compression_failed":
+            failure_count += 1
+            continue
+        if event.event_type != "context_compressed":
+            continue
+        payload = json.loads(event.payload_json or "{}")
+        compressed_count += 1
+        agent_calls += max(0, int(payload.get("calls") or 0))
+        original_tokens += max(0, int(payload.get("original_tokens") or 0))
+        compressed_tokens += max(0, int(payload.get("compressed_tokens") or 0))
+    tokens_saved = max(0, original_tokens - compressed_tokens)
+    compression_ratio = (
+        round(tokens_saved * 100 / original_tokens, 1)
+        if original_tokens > 0
+        else 0.0
+    )
+    return {
+        "context_compressions": compressed_count,
+        "context_compression_failures": failure_count,
+        "context_compression_calls": agent_calls,
+        "context_original_tokens": original_tokens,
+        "context_compressed_tokens": compressed_tokens,
+        "context_tokens_saved": tokens_saved,
+        "context_compression_ratio": compression_ratio,
+    }
+
+
 def _metrics(
     run: AgentRun,
     goals: list[GoalNode],
     tools: list[ToolExecution],
+    events: list[RunEvent] | None = None,
 ) -> dict[str, Any]:
     goal_statuses = Counter(goal.status for goal in goals)
     terminal_goals = sum(
@@ -109,6 +144,7 @@ def _metrics(
         ),
         "web_pages_used": run.web_pages_used,
         "web_page_budget": run.web_page_budget,
+        **_compression_metrics(events or []),
     }
 
 
@@ -152,6 +188,7 @@ def _summary(
     run: AgentRun,
     goals: list[GoalNode],
     tools: list[ToolExecution],
+    events: list[RunEvent] | None = None,
     *,
     retry_count: int = 0,
     feedback: AgentRunFeedback | None = None,
@@ -166,7 +203,7 @@ def _summary(
         "model_provider": run.model_provider,
         "model_name": run.model_name,
         "routing": _routing(run, goals),
-        "metrics": _metrics(run, goals, tools),
+        "metrics": _metrics(run, goals, tools, events),
         "error_message": run.error_message,
         "started_at": _iso(run.started_at),
         "completed_at": _iso(run.completed_at),
@@ -202,6 +239,19 @@ async def list_research_runs(
         .all()
         if run_ids else []
     )
+    events = (
+        db.query(RunEvent)
+        .filter(
+            RunEvent.run_id.in_(run_ids),
+            RunEvent.event_type.in_((
+                "context_compressed",
+                "context_compression_failed",
+            )),
+        )
+        .order_by(RunEvent.sequence)
+        .all()
+        if run_ids else []
+    )
     retry_counts = Counter(
         child.retry_of_run_id
         for child in db.query(AgentRun)
@@ -216,16 +266,20 @@ async def list_research_runs(
     } if run_ids else {}
     goals_by_run: dict[str, list[GoalNode]] = {run_id: [] for run_id in run_ids}
     tools_by_run: dict[str, list[ToolExecution]] = {run_id: [] for run_id in run_ids}
+    events_by_run: dict[str, list[RunEvent]] = {run_id: [] for run_id in run_ids}
     for goal in goals:
         goals_by_run[goal.run_id].append(goal)
     for tool in tools:
         tools_by_run[tool.run_id].append(tool)
+    for event in events:
+        events_by_run[event.run_id].append(event)
     return {
         "runs": [
             _summary(
                 run,
                 goals_by_run[run.id],
                 tools_by_run[run.id],
+                events_by_run[run.id],
                 retry_count=retry_counts[run.id],
                 feedback=feedback_by_run.get(run.id),
             )
@@ -321,6 +375,7 @@ async def get_research_run(run_id: str, db: Session = Depends(get_db)):
             run,
             goals,
             executions,
+            events,
             retry_count=len(retried_by_run_ids),
             feedback=feedback,
         ),
