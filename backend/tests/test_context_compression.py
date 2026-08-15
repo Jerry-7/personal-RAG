@@ -12,6 +12,7 @@ from app.services.context_compression import (
     ContextCompressionError,
     ContextCompressor,
     estimate_tokens,
+    extract_protected_anchors,
     split_text_losslessly,
 )
 
@@ -60,6 +61,20 @@ class AgentCompressionProvider(IdentifierPreservingProvider):
         return AgentResponse(content="done")
 
 
+class CorrectingAnchorProvider:
+    def __init__(self, *, always_omit: bool = False) -> None:
+        self.always_omit = always_omit
+        self.calls = 0
+
+    async def chat(self, *, messages, **kwargs):
+        self.calls += 1
+        content = messages[-1]["content"]
+        anchors = extract_protected_anchors(content)
+        if "Missing anchors:" in content and not self.always_omit:
+            return LLMResponse(content="corrected " + " ".join(anchors))
+        return LLMResponse(content="summary without protected references")
+
+
 class ContextCompressionTests(unittest.IsolatedAsyncioTestCase):
     def test_lossless_split_never_discards_characters(self):
         text = "第一段。\n\n" + "alpha beta gamma. " * 80 + "结束 [12]"
@@ -106,6 +121,44 @@ class ContextCompressionTests(unittest.IsolatedAsyncioTestCase):
                 "unchanged evidence " * 300,
                 target_tokens=128,
                 purpose="non-reducing context",
+            )
+
+    async def test_missing_anchor_is_retried_and_preserved(self):
+        provider = CorrectingAnchorProvider()
+        compressor = ContextCompressor(
+            provider,  # type: ignore[arg-type]
+            chunk_tokens=256,
+            max_rounds=2,
+        )
+        text = (
+            "Investigate CASE-2048 using https://example.com/report and cite [7]. "
+            + "supporting detail " * 100
+        )
+
+        result = await compressor.compress_text(
+            text,
+            target_tokens=128,
+            purpose="protected evidence",
+        )
+
+        self.assertEqual(result.stats.protected_anchors, 3)
+        self.assertGreaterEqual(result.stats.anchor_retries, 1)
+        self.assertGreaterEqual(provider.calls, 2)
+        for anchor in ("CASE-2048", "https://example.com/report", "[7]"):
+            self.assertIn(anchor, result.content)
+
+    async def test_repeated_anchor_omission_fails_explicitly(self):
+        compressor = ContextCompressor(
+            CorrectingAnchorProvider(always_omit=True),  # type: ignore[arg-type]
+            chunk_tokens=256,
+            max_rounds=2,
+        )
+
+        with self.assertRaisesRegex(ContextCompressionError, "protected anchors"):
+            await compressor.compress_text(
+                "CASE-4096 " + "detail " * 200,
+                target_tokens=128,
+                purpose="anchor failure",
             )
 
     async def test_message_compression_keeps_system_rules_and_request_identifier(self):
