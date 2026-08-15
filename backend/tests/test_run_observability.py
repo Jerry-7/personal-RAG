@@ -8,7 +8,7 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
-from app.api.research import get_research_run, list_research_runs
+from app.api.research import get_research_run, get_routing_analytics, list_research_runs
 from app.db.database import Base
 from app.db.models import AgentRun, Conversation, ToolExecution
 from app.services.goal_runtime import GoalRuntime
@@ -32,6 +32,7 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
             id="observable-run",
             conversation_id=self.conversation.id,
             mode="auto",
+            route_tier_preference="expert",
             agent_profile="expert_supervisor",
             route_tier="expert",
             route_name="supervisor",
@@ -71,7 +72,7 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
             title="worker",
             kind="agent",
             agent_profile="web_researcher",
-            input_data={},
+            input_data={"planning_source": "model"},
             tool_call_budget=7,
             model_provider="ollama",
             model_name="standard-model",
@@ -137,6 +138,30 @@ class RunObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(detail["goals"][2]["model_name"], "standard-model")
         self.assertEqual(detail["tools"][0]["name"], "web_search")
         self.assertEqual(detail["tools"][0]["arguments"], {"query": "test"})
+
+    async def test_routing_analytics_groups_operational_metrics(self):
+        analytics = await get_routing_analytics(None, 200, self.db)
+        summary = analytics["summary"]
+
+        self.assertEqual(summary["run_count"], 2)
+        self.assertEqual(summary["terminal_run_count"], 2)
+        self.assertEqual(summary["completed_run_count"], 1)
+        self.assertEqual(summary["failed_run_count"], 1)
+        self.assertEqual(summary["operational_success_rate"], 50.0)
+        self.assertEqual(summary["average_duration_ms"], 2000)
+        self.assertEqual(summary["retry_run_count"], 1)
+        self.assertEqual(summary["manual_override_count"], 1)
+        self.assertEqual(summary["tool_call_count"], 1)
+        self.assertEqual(summary["tool_budget_utilization"], 5.9)
+        self.assertEqual(summary["tier_counts"], {
+            "fast": 0,
+            "standard": 1,
+            "expert": 1,
+        })
+        expert = next(group for group in analytics["groups"] if group["tier"] == "expert")
+        self.assertEqual(expert["route"], "supervisor")
+        self.assertEqual(expert["planning_source"], "model")
+        self.assertEqual(expert["operational_success_rate"], 100.0)
 
 
 class ModelRoutingMigrationTests(unittest.TestCase):

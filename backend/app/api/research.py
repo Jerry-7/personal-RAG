@@ -20,6 +20,7 @@ from app.db.models import (
     WebSnapshot,
 )
 from app.services.goal_runtime import serialize_event, serialize_goal
+from app.services.routing_analytics import build_routing_analytics
 from app.services.web_search import search_provider
 
 router = APIRouter()
@@ -207,6 +208,34 @@ async def list_research_runs(
             for run in runs
         ]
     }
+
+
+@router.get("/research-runs/analytics")
+async def get_routing_analytics(
+    conversation_id: str | None = None,
+    limit: int = Query(200, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    query = db.query(AgentRun)
+    if conversation_id:
+        query = query.filter(AgentRun.conversation_id == conversation_id)
+    runs = query.order_by(AgentRun.started_at.desc()).limit(limit).all()
+    run_ids = [run.id for run in runs]
+    goals = (
+        db.query(GoalNode)
+        .filter(GoalNode.run_id.in_(run_ids))
+        .order_by(GoalNode.sequence)
+        .all()
+        if run_ids else []
+    )
+    tools = (
+        db.query(ToolExecution)
+        .filter(ToolExecution.run_id.in_(run_ids))
+        .order_by(ToolExecution.created_at)
+        .all()
+        if run_ids else []
+    )
+    return build_routing_analytics(runs, goals, tools)
 
 
 @router.get("/research-runs/{run_id}")
