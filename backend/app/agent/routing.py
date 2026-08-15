@@ -33,6 +33,25 @@ class RoutingPolicy:
             )
 
 
+def classify_route_tier(
+    score: int,
+    policy: RoutingPolicy | None = None,
+    *,
+    mode: ChatMode = "auto",
+) -> AgentTier:
+    """Map a complexity score to a tier while retaining hard web constraints."""
+    active_policy = policy or RoutingPolicy()
+    if score >= active_policy.expert_min_score:
+        tier: AgentTier = "expert"
+    elif score >= active_policy.standard_min_score:
+        tier = "standard"
+    else:
+        tier = "fast"
+    if mode == "web" and tier == "fast":
+        return "standard"
+    return tier
+
+
 @dataclass(frozen=True)
 class AgentProfile:
     """Capabilities and guardrails for one executable Agent role."""
@@ -208,13 +227,7 @@ class ComplexityRouter:
             score = 2
             reasons.append("tool_access_required")
 
-        tier: AgentTier = (
-            "expert"
-            if score >= self.policy.expert_min_score
-            else "standard"
-            if score >= self.policy.standard_min_score
-            else "fast"
-        )
+        tier = classify_route_tier(score, self.policy, mode=mode)
         decision = self._decision_for_tier(
             tier,
             policy_version=self.policy.version,

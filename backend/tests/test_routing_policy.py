@@ -1,14 +1,17 @@
 import importlib.util
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from pydantic import ValidationError
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
 from app.agent.routing import ComplexityRouter, RoutingPolicy
 from app.db.database import Base
+from app.schemas.routing_policy import RoutingPolicySimulation
 from app.services.routing_policy import (
     RoutingPolicyConflict,
     create_routing_policy,
@@ -16,6 +19,7 @@ from app.services.routing_policy import (
     list_routing_policies,
     rollback_routing_policy,
 )
+from app.services.routing_policy_evaluation import simulate_routing_policy
 
 
 class RoutingPolicyTests(unittest.TestCase):
@@ -97,6 +101,60 @@ class RoutingPolicyTests(unittest.TestCase):
         self.assertEqual(automatic.policy_version, 7)
         self.assertEqual(manual.tier, "expert")
         self.assertEqual(manual.policy_version, 7)
+
+    def test_simulation_excludes_manual_and_non_terminal_runs(self):
+        def run(**values):
+            defaults = {
+                "status": "completed",
+                "route_tier_preference": "auto",
+                "route_tier": "standard",
+                "route_score": 2,
+                "mode": "auto",
+                "route_policy_version": 0,
+            }
+            defaults.update(values)
+            return SimpleNamespace(**defaults)
+
+        runs = [
+            run(route_tier="standard", route_score=2),
+            run(route_tier="expert", route_score=4),
+            run(route_tier="standard", route_score=2, mode="web"),
+            run(route_tier="expert", route_score=1, route_tier_preference="expert"),
+            run(route_tier="standard", route_score=0),
+            run(status="running", route_tier="standard", route_score=2),
+        ]
+
+        result = simulate_routing_policy(
+            runs,
+            standard_min_score=3,
+            expert_min_score=5,
+        )
+
+        self.assertEqual(result["eligibility"], {
+            "sample_limit": 6,
+            "terminal_run_count": 5,
+            "eligible_auto_run_count": 3,
+            "excluded_manual_override_count": 1,
+            "excluded_baseline_mismatch_count": 1,
+            "excluded_non_terminal_count": 1,
+        })
+        self.assertEqual(result["projected_tier_counts"], {
+            "fast": 1,
+            "standard": 2,
+            "expert": 0,
+        })
+        self.assertEqual(result["changed_run_count"], 2)
+        self.assertEqual(result["upgrade_run_count"], 0)
+        self.assertEqual(result["downgrade_run_count"], 2)
+        self.assertTrue(result["is_counterfactual"])
+        self.assertIsNone(result["quality_prediction"])
+
+    def test_simulation_threshold_order_is_validated(self):
+        with self.assertRaises(ValidationError):
+            RoutingPolicySimulation(
+                standard_min_score=5,
+                expert_min_score=3,
+            )
 
 
 class RoutingPolicyMigrationTests(unittest.TestCase):

@@ -95,6 +95,32 @@ def _summarize(
     }
 
 
+def summarize_policy_versions(
+    runs: list[AgentRun],
+    goals: list[GoalNode],
+    tools: list[ToolExecution],
+    feedback: list[AgentRunFeedback] | None = None,
+) -> list[dict[str, Any]]:
+    """Aggregate observed metrics without mixing routing policy versions."""
+    goals_by_run: dict[str, list[GoalNode]] = defaultdict(list)
+    tools_by_run: dict[str, list[ToolExecution]] = defaultdict(list)
+    for goal in goals:
+        goals_by_run[goal.run_id].append(goal)
+    for tool in tools:
+        tools_by_run[tool.run_id].append(tool)
+    feedback_by_run = {item.run_id: item for item in feedback or []}
+    grouped_runs: dict[int, list[AgentRun]] = defaultdict(list)
+    for run in runs:
+        grouped_runs[run.route_policy_version].append(run)
+    return [
+        {
+            "policy_version": policy_version,
+            **_summarize(group, goals_by_run, tools_by_run, feedback_by_run),
+        }
+        for policy_version, group in sorted(grouped_runs.items(), reverse=True)
+    ]
+
+
 def build_routing_analytics(
     runs: list[AgentRun],
     goals: list[GoalNode],
