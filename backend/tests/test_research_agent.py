@@ -129,11 +129,18 @@ class ToolVisibilityTests(unittest.IsolatedAsyncioTestCase):
         handler = AsyncMock(return_value="should not run")
         registry.register("web", "web", {"type": "object"}, handler, source="web")
         loop = AgentLoop(provider=None, tools=registry)
-        context = AgentRunContext(db=None, conversation_id="conv", mode="local")
+        context = AgentRunContext(
+            db=None,
+            conversation_id="conv",
+            goal_node_id="goal-local",
+            mode="local",
+        )
 
         events = [event async for event in loop._execute_tool("web", {}, 1, context)]
 
         handler.assert_not_awaited()
+        self.assertEqual(events[0]["data"]["node_id"], "goal-local")
+        self.assertEqual(events[1]["data"]["node_id"], "goal-local")
         self.assertEqual(events[1]["data"]["status"], "failed")
 
 

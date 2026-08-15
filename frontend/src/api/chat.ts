@@ -27,9 +27,9 @@ export interface ChatStreamCallbacks {
   onDone: (data: SSEDoneEvent) => void;
   onError: (error: string) => void;
   /** Agent 模式：工具调用开始 */
-  onToolCall?: (id: string, name: string, args: Record<string, unknown>) => void;
+  onToolCall?: (id: string, nodeId: string, name: string, args: Record<string, unknown>) => void;
   /** Agent 模式：工具调用结果 */
-  onToolResult?: (id: string, name: string, result: string, status: 'completed' | 'failed', durationMs?: number) => void;
+  onToolResult?: (id: string, nodeId: string, name: string, result: string, status: 'completed' | 'failed', durationMs?: number) => void;
   /** Agent 模式：达到最大迭代 */
   onMaxIterations?: (message: string) => void;
   onRunStarted?: (runId: string, conversationId: string) => void;
@@ -74,11 +74,14 @@ export function streamChatQuery(
                   break;
                 // ── Agent 模式事件 ──────────────────────────
                 case 'tool_call':
-                  callbacks.onToolCall?.(String(data.id || ''), String(data.name), data.arguments as Record<string, unknown>);
+                  callbacks.onToolCall?.(
+                    String(data.id || ''), String(data.node_id || ''), String(data.name),
+                    data.arguments as Record<string, unknown>
+                  );
                   break;
                 case 'tool_result':
                   callbacks.onToolResult?.(
-                    String(data.id || ''), String(data.name), String(data.result),
+                    String(data.id || ''), String(data.node_id || ''), String(data.name), String(data.result),
                     data.status === 'failed' ? 'failed' : 'completed', Number(data.duration_ms || 0)
                   );
                   break;

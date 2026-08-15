@@ -90,6 +90,7 @@ export interface AgentStep {
   message?: string;
   timestamp: number;
   id?: string;
+  node_id?: string;
   status?: 'running' | 'completed' | 'failed';
   duration_ms?: number;
 }

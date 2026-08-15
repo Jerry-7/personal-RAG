@@ -440,7 +440,13 @@ class AgentLoop:
         execution_id = execution.id if execution else ""
         yield {
             "event": "tool_call",
-            "data": {"id": execution_id, "name": name, "arguments": arguments, "status": "running"},
+            "data": {
+                "id": execution_id,
+                "node_id": context.goal_node_id if context else "",
+                "name": name,
+                "arguments": arguments,
+                "status": "running",
+            },
         }
 
         started = time.perf_counter()
@@ -471,6 +477,7 @@ class AgentLoop:
             "event": "tool_result",
             "data": {
                 "id": execution_id,
+                "node_id": context.goal_node_id if context else "",
                 "name": name,
                 "result": result,
                 "status": "failed" if failed else "completed",

@@ -41,8 +41,8 @@ interface ChatState {
   setRunId: (id: string) => void;
   setRouteSelection: (selection: RouteSelection) => void;
   applyRunEvent: (event: RunEventData) => void;
-  addToolCall: (id: string, name: string, args: Record<string, unknown>) => void;
-  finishToolCall: (id: string, name: string, result: string, status: 'completed' | 'failed', durationMs?: number) => void;
+  addToolCall: (id: string, nodeId: string, name: string, args: Record<string, unknown>) => void;
+  finishToolCall: (id: string, nodeId: string, name: string, result: string, status: 'completed' | 'failed', durationMs?: number) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -147,13 +147,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       : [...state.runEvents, event].sort((left, right) => left.sequence - right.sequence);
     return { goalNodes, runEvents };
   }),
-  addToolCall: (id, name, args) => set((state) => ({
-    agentSteps: [...state.agentSteps, { id, type: 'tool_call', name, arguments: args, status: 'running', timestamp: Date.now() }],
+  addToolCall: (id, nodeId, name, args) => set((state) => ({
+    agentSteps: [...state.agentSteps, { id, node_id: nodeId, type: 'tool_call', name, arguments: args, status: 'running', timestamp: Date.now() }],
   })),
-  finishToolCall: (id, name, result, status, durationMs) => set((state) => ({
+  finishToolCall: (id, nodeId, name, result, status, durationMs) => set((state) => ({
     agentSteps: state.agentSteps.map((step) =>
-      (id && step.id === id) || (!id && step.name === name && step.status === 'running')
-        ? { ...step, result, status, duration_ms: durationMs }
+      (id && step.id === id)
+        || (!id && step.node_id === nodeId && step.name === name && step.status === 'running')
+        ? { ...step, node_id: nodeId, result, status, duration_ms: durationMs }
         : step
     ),
   })),
