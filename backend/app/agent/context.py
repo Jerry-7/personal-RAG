@@ -29,6 +29,8 @@ class AgentRunContext:
     web_search_performed: bool = False
     tool_output_chars: int = 0
     max_tool_output_chars: int = 40000
+    # 网页语义提取结果缓存 (url -> evidence), 每个页面只提取一次
+    page_evidence: dict[str, str] = field(default_factory=dict)
 
     def is_cancelled(self) -> bool:
         return bool(self.cancellation_event and self.cancellation_event.is_set())

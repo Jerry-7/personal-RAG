@@ -15,6 +15,7 @@ from app.providers.base import LLMProvider, normalize_system_messages
 from app.providers.ollama import OllamaLLMProvider
 from app.services.citation import CitationParser
 from app.services.context_compression import ContextCompressor
+from app.services.text_utils import clip_to_sentence
 
 
 # ── RAG Prompt 模板 ──────────────────────────────────────────────
@@ -202,7 +203,7 @@ class Generator:
                     "document_id": chunk.get("document_id", ""),
                     "chunk_id": chunk.get("chunk_id", ""),
                     "source_id": chunk.get("source_id", ""),
-                    "snippet": chunk.get("text", "")[:200],
+                    "snippet": clip_to_sentence(chunk.get("text", ""), 200),
                     "filename": chunk.get("filename", ""),
                     "page_number": chunk.get("page_number"),
                     "start_timestamp": chunk.get("start_timestamp"),

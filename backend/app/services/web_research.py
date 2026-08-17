@@ -1,6 +1,5 @@
 """Persistence, citation registration, and bounded site research."""
 
-import re
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
@@ -12,26 +11,32 @@ from app.services.web_fetcher import FetchedPage, web_fetcher
 
 
 class WebResearchService:
-    @staticmethod
-    def _excerpt(content: str, objective: str, limit: int = 3500) -> str:
-        terms = set(re.findall(r"[\w\u4e00-\u9fff]{2,}", objective.lower()))
-        paragraphs = [part.strip() for part in re.split(r"\n{2,}", content) if part.strip()]
-        ranked = sorted(
-            enumerate(paragraphs),
-            key=lambda item: sum(term in item[1].lower() for term in terms),
-            reverse=True,
+    async def _extract_evidence(
+        self,
+        context: AgentRunContext,
+        page: FetchedPage,
+        objective: str,
+    ) -> str:
+        """\u76ee\u6807\u8bed\u4e49\u63d0\u53d6, \u6bcf\u9875\u53ea\u63d0\u53d6\u4e00\u6b21\u5e76\u7f13\u5b58\u5230 context \u4f9b\u8c03\u7528\u65b9\u590d\u7528."""
+        key = page.url
+        cached = context.page_evidence.get(key)
+        if cached:
+            return cached
+        from app.services.semantic_extractor import semantic_extractor
+
+        result = await semantic_extractor.extract(
+            page.content,
+            objective=objective,
         )
-        selected: list[str] = []
-        length = 0
-        for _, paragraph in ranked:
-            if length + len(paragraph) > limit:
-                paragraph = paragraph[: max(0, limit - length)]
-            if paragraph:
-                selected.append(paragraph)
-                length += len(paragraph)
-            if length >= limit:
-                break
-        return "\n\n".join(selected) or content[:limit]
+        context.page_evidence[key] = result.content
+        return result.content
+
+    @staticmethod
+    def _preview(evidence: str, limit: int = 240) -> str:
+        """\u5c55\u793a\u7247\u6bb5: \u4ece\u8bed\u4e49\u8bc1\u636e\u53d6\u6574\u53e5\u9884\u89c8, \u4e0d\u5728\u534a\u53e5\u5904\u5207\u65ad."""
+        from app.services.text_utils import clip_to_sentence
+
+        return clip_to_sentence(evidence, limit)
 
     async def fetch_and_store(
         self,
@@ -96,11 +101,12 @@ class WebResearchService:
                     run.web_pages_used = context.web_pages_used
             context.db.commit()
 
+        evidence = await self._extract_evidence(context, page, objective)
         citation_index = context.register_source({
             "document_id": "",
             "chunk_id": "",
             "snapshot_id": snapshot.id,
-            "snippet": self._excerpt(snapshot.content, objective, 240),
+            "snippet": self._preview(evidence, 240),
             "filename": snapshot.title,
             "title": snapshot.title,
             "url": snapshot.canonical_url,

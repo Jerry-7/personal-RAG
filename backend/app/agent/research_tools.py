@@ -42,8 +42,8 @@ async def _fetch_web_page(
     context: AgentRunContext,
 ) -> str:
     page, _, citation = await web_research_service.fetch_and_store(context, url, objective)
-    excerpt = web_research_service._excerpt(page.content, objective)
-    return f"[{citation}] {page.title}\nURL: {page.url}\n\n{excerpt}"
+    evidence = context.page_evidence.get(page.url) or page.content
+    return f"[{citation}] {page.title}\nURL: {page.url}\n\n{evidence}"
 
 
 async def _crawl_website(
@@ -57,8 +57,8 @@ async def _crawl_website(
         return "站内研究没有读取到页面。"
     parts: list[str] = []
     for page, _, citation, depth in pages:
-        excerpt = web_research_service._excerpt(page.content, objective, limit=1800)
-        parts.append(f"[{citation}] {page.title} (深度 {depth})\nURL: {page.url}\n{excerpt}")
+        evidence = context.page_evidence.get(page.url) or page.content
+        parts.append(f"[{citation}] {page.title} (深度 {depth})\nURL: {page.url}\n{evidence}")
     return "\n\n".join(parts)
 
 

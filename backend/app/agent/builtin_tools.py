@@ -22,6 +22,7 @@ from typing import Any
 from app.agent.context import AgentRunContext
 from app.agent.tools import tool_registry
 from app.services.retriever import retriever
+from app.services.text_utils import clip_to_sentence
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def _register_chunks(
             "document_id": chunk.get("document_id", ""),
             "chunk_id": chunk.get("chunk_id", ""),
             "source_id": chunk.get("source_id", ""),
-            "snippet": chunk.get("text", "")[:200],
+            "snippet": clip_to_sentence(chunk.get("text", ""), 200),
             "filename": chunk.get("filename", ""),
             "page_number": chunk.get("page_number"),
             "start_timestamp": chunk.get("start_timestamp"),

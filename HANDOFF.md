@@ -24,6 +24,7 @@
 - **完整工具能力**：Agent 等级不再屏蔽工具；`local` 模式仍作为安全边界禁用网络工具。
 - **Prompt 软频控**：各 Profile 配置总工具调用建议和单工具重复建议，只观测超建议行为，不做等级硬拒绝。
 - **上下文压缩**：长上下文由压缩 Agent 分层处理，保护 URL、引用号和业务标识；压缩失败显式终止，不做文本硬截断。
+- **目标语义提取**：网页证据按研究目标由提取 Agent 语义抽取 + 压缩，替代字符边界硬切；本地展示片段改为整句截断（`clip_to_sentence`），任何文本不再从半句/单词中间切断。
 - **运行可视化**：前端展示路由来源与置信度、目标树、并行分支、工具调用、重试、压缩指标、工具频控和历史运行分析。
 
 ## 关键路由策略
@@ -79,6 +80,15 @@
 - `enabled=False` 或 `heuristic` 模式时零模型调用；web 模式硬约束（≥standard）与手动 tier 覆盖不变
 - 路由来源/评分/置信度/原因码 provenance 全保留，`decision_source` 取值不变（前端类型无需改动）
 
+### 7. 硬截断替换为 Agent 语义提取 (当前工作区)
+- 核心改动：`web_research.py` 的 `_excerpt`（关键词打分 + 字符硬切，会从段落中间切断）被移除，改为 `SemanticExtractor` 目标语义提取
+- 新模块 `services/semantic_extractor.py`：目标提取 Agent → 仍超预算则压缩 Agent 收敛 → 失败时整段关键词兜底（绝不砍半段）
+  - 短内容短路：预算内零模型调用（`estimate_tokens ≤ max(128, budget)` 直接返回）
+  - 同一 URL 的提取结果缓存在 `AgentRunContext.page_evidence`，`fetch_web_page` / `crawl_website` / 引用 snippet 复用，每页只提取一次
+- 新工具函数 `services/text_utils.py::clip_to_sentence`：展示片段（引用 snippet、sources 上下文、`web_search` 摘要）统一整句截断，不再 `[:N]` 半句切断
+- 新增配置 `agent_extraction_enabled=True` / `agent_extraction_max_chars=3500`；`enabled=False` 时退化为原样返回（不截断、不调用模型）
+- 新增测试 `tests/test_semantic_extractor.py`（14 项：短路/提取/压缩/兜底/缓存/整句截断）
+
 ## 配置注意
 
 ### `.env` / DB Settings 优先级
@@ -100,6 +110,10 @@ Embedding: bge-m3  (Ollama @ 10.10.0.3:11434)
 `model`（默认）：每条 `auto` 请求先经 fast 模型语义路由，启发式仅作快通道 + 失败兜底；每条请求多一次 fast 模型调用（本地 Ollama 约 0.5–3s），由快通道缓解。  
 想回滚旧行为：`.env` 设 `AGENT_ROUTING_MODE=adaptive`（旧混合）或 `heuristic`（纯启发式，零模型调用）。
 
+### 目标语义提取 (`agent_extraction_enabled`)
+`True`（默认）：网页正文按研究目标做 Agent 语义提取，超预算时压缩收敛，证据与引用 snippet 均不硬截断。  
+每页大正文多一次模型调用（超过 3500 字才触发，短页短路）；想完全关掉：`.env` 设 `AGENT_EXTRACTION_ENABLED=False`（正文原样入库，展示片段仍整句截断）。
+
 ## 关键文件
 
 | 文件 | 作用 |
@@ -113,6 +127,8 @@ Embedding: bge-m3  (Ollama @ 10.10.0.3:11434)
 | `backend/app/agent/tools.py` | ToolRegistry + `@skill` 装饰器 |
 | `backend/app/services/goal_runtime.py` | GoalNode 生命周期与有序运行事件 |
 | `backend/app/services/context_compression.py` | 无硬截断的分层上下文压缩 |
+| `backend/app/services/semantic_extractor.py` | 目标语义提取 (提取 Agent → 压缩收敛 → 整段兜底) |
+| `backend/app/services/text_utils.py` | `clip_to_sentence` 整句截断工具 |
 | `backend/app/agent/builtin_tools.py` | 3 个内置工具 (search/list_docs/read_chunk) |
 | `backend/app/services/event_bus.py` | 内存 pub/sub (asyncio.Queue per doc_id) |
 | `backend/app/services/task_manager.py` | Semaphore(10) 并发控制 |

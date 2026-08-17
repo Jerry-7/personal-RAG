@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     agent_routing_fast_path_enabled: bool = True
     agent_routing_fast_path_max_chars: int = 20
     agent_routing_fast_path_confidence: float = 0.85
+    # 目标语义提取: 网页证据按研究目标提取+压缩, 替代字符边界硬截断
+    agent_extraction_enabled: bool = True
+    agent_extraction_max_chars: int = 3500
     agent_fast_model: Optional[str] = None
     agent_standard_model: Optional[str] = None
     agent_expert_model: Optional[str] = None

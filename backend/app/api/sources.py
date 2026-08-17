@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
+from app.services.text_utils import clip_to_sentence
 
 router = APIRouter()
 
@@ -109,7 +110,7 @@ async def get_source_chunk(
     )
     surrounding = [
         {
-            "text": n["text"][:500],
+            "text": clip_to_sentence(n["text"], 500),
             "chunk_index": n["metadata"].get("chunk_index", 0),
             "page_number": n["metadata"].get("page_number"),
         }
