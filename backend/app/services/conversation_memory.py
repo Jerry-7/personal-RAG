@@ -1,5 +1,6 @@
 """Conversation context with a persisted Agent-compressed rolling summary."""
 
+import json
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
@@ -96,11 +97,11 @@ class ConversationMemoryService:
             return None
         source = "\n\n".join(
             (
-                f"<message id={message.id!r} role={message.role!r}>\n"
-                f"{message.content}\n"
+                f"<message index={index} role={json.dumps(message.role)}>\n"
+                f"{message.content or ''}\n"
                 "</message>"
             )
-            for message in old_messages
+            for index, message in enumerate(old_messages, start=1)
         )
         compressed = await ContextCompressor(
             provider,

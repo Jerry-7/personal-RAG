@@ -250,8 +250,12 @@ class AdaptiveComplexityRouter:
         mode: ChatMode,
     ) -> str:
         history_text = "\n\n".join(
-            f"<{message.get('role', 'message')}>\n{message.get('content', '')}\n</message>"
-            for message in history
+            (
+                f"<message index={index} role={json.dumps(message.get('role', 'message'))}>\n"
+                f"{message.get('content') or ''}\n"
+                "</message>"
+            )
+            for index, message in enumerate(history, start=1)
         )
         return (
             f"Mode: {mode}\n\n"

@@ -32,6 +32,19 @@ class ClassifierProvider:
 
 
 class AdaptiveComplexityRouterTests(unittest.IsolatedAsyncioTestCase):
+    def test_classifier_request_uses_message_role_tags(self):
+        request = AdaptiveComplexityRouter._classifier_request(
+            "当前问题",
+            [
+                {"role": "user", "content": "第一条"},
+                {"role": "assistant", "content": "第二条"},
+            ],
+            "standard",
+        )
+        self.assertIn('<message index=1 role="user">\n第一条\n</message>', request)
+        self.assertIn('<message index=2 role="assistant">\n第二条\n</message>', request)
+        self.assertNotIn("<user>", request)
+
     # ── model 模式 (默认): Agent 主导 ──────────────────────────
 
     async def test_model_mode_runs_classifier_as_primary(self):
