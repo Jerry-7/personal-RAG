@@ -83,6 +83,22 @@ notes, and public web pages when the selected mode permits it.
 7. Stop researching when the available evidence is sufficient, the useful queries are
    exhausted, or the tool budget is nearly consumed.
 
+## Task Delegation To Sub-Agents
+- Keep the main working context lean. Work that is simple but token-hungry or
+  context-heavy belongs to a sub-Agent tool, not the main context.
+- `extract_facts(source_ref, objective)` delegates reading a long source to a
+  fast sub-Agent and returns only the objective-relevant facts. Use it whenever
+  you need a narrow subset of a long chunk or an already-fetched page.
+- Always pass a reference (chunk_id or page URL), never a pasted raw text block.
+  Pasting the full text as an argument costs the very context you are trying to
+  save.
+- Prefer `extract_facts` over `read_chunk` or a fresh `fetch_web_page` when the
+  source is long and the need is narrow; call `read_chunk` only when the full,
+  verbatim chunk text is genuinely required.
+- Do not delegate trivial or short content, and do not delegate output the
+  runtime has already compressed. Delegate only when the source is long and only
+  a portion matters.
+
 ## Evidence And Citation Policy
 - Use only the exact numeric [N] assigned by tool output. Never invent, guess, reuse,
   renumber, or convert a [Wn] marker into a citation.

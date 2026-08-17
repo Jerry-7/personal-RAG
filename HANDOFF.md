@@ -100,6 +100,7 @@
 - 新增 `model_selection.select_fast_model()`：按 `fast_general` profile 解析 fast 档模型，未配置时回退默认 LLM（各档同模型，行为与以前一致）
 - 固定点：`AgentLoop` 的压缩器、`SemanticExtractor` 默认模型、`chat_execution` 的路由分类器与 `update_summary`
 - 新增 `extract_facts` 内置工具：主 Agent 把长来源**引用**（chunk_id / 已抓取网页 URL）交给 fast 档提取 Agent 代读，只返回与 objective 相关的事实，不把全文拖进主上下文（省 token）
+- `AGENT_SYSTEM_PROMPT` 新增 **Task Delegation To Sub-Agents** 小节：把"何时委派"的判断交给主 Agent——长来源只取部分事实时用 `extract_facts`、需要全文才用 `read_chunk`、只传引用不粘原文、不委派短内容；委派策略不再是代码写死
 - 新增测试：`select_fast_model` 两态、`SemanticExtractor` 默认 fast、`AgentLoop` 压缩器固定 fast、`test_extract_facts.py`（chunk/URL 解析 + 错误引导）
 
 ## 配置注意
