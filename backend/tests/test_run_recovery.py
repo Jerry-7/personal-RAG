@@ -228,21 +228,20 @@ class RunControlTests(unittest.IsolatedAsyncioTestCase):
         self.db.commit()
 
     def tearDown(self):
-        from app.api.chat import _cancellation_flags, _pause_flags
+        from app.services.chat_execution import chat_run_manager
 
-        _cancellation_flags.clear()
-        _pause_flags.clear()
+        chat_run_manager.cancellation_flags.clear()
+        chat_run_manager.pause_flags.clear()
         self.db.close()
         self.engine.dispose()
 
     async def test_pause_resume_and_cancel_update_cooperative_events(self):
         from app.api.chat import (
-            _cancellation_flags,
-            _pause_flags,
             cancel_chat,
             pause_chat,
             resume_chat,
         )
+        from app.services.chat_execution import chat_run_manager
 
         class JsonRequest:
             def __init__(self, conversation_id: str):
@@ -255,8 +254,8 @@ class RunControlTests(unittest.IsolatedAsyncioTestCase):
         cancellation_event = asyncio.Event()
         pause_event = asyncio.Event()
         pause_event.set()
-        _cancellation_flags[self.conversation.id] = cancellation_event
-        _pause_flags[self.conversation.id] = pause_event
+        chat_run_manager.cancellation_flags[self.conversation.id] = cancellation_event
+        chat_run_manager.pause_flags[self.conversation.id] = pause_event
 
         paused = await pause_chat(request, self.db)
         self.db.refresh(self.run)
@@ -312,7 +311,7 @@ class RunReplayGeneratorTests(unittest.IsolatedAsyncioTestCase):
         self.engine.dispose()
 
     async def test_replay_generator_links_new_run_without_duplicate_user_message(self):
-        from app.api.chat import _agent_event_generator
+        from app.services.chat_execution import agent_event_generator
         from app.services.generator import generator
 
         class Provider:
@@ -333,7 +332,7 @@ class RunReplayGeneratorTests(unittest.IsolatedAsyncioTestCase):
         ):
             events = [
                 event
-                async for event in _agent_event_generator(
+                async for event in agent_event_generator(
                     self.user_message.content,
                     self.conversation.id,
                     self.db,
