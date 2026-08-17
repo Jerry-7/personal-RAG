@@ -205,11 +205,12 @@ async def agent_event_generator(
     routing_provider = await gen_service._get_provider()
     # version, standard_min_score, expert_min_score
     routing_policy = get_active_routing_policy(db)
-    classifier_selection = select_agent_model(agent_registry.require("fast_general"))
+    # fast 档模型: 路由分类 + 会话摘要压缩等子 Agent 任务统一使用
+    fast_selection = select_agent_model(agent_registry.require("fast_general"))
     route_decision = await AdaptiveComplexityRouter(
         routing_policy,
         routing_provider,
-        classifier_model=classifier_selection.model,
+        classifier_model=fast_selection.model,
     ).route(
         question,
         mode=mode,
@@ -469,7 +470,7 @@ async def agent_event_generator(
                     db,
                     conversation_id,
                     llm_provider,
-                    model_name=model_selection.model,
+                    model_name=fast_selection.model,
                 )
                 if summary_update and summary_update.stats.compressed:
                     payload = {

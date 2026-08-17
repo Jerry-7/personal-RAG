@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from app.agent.model_selection import select_fast_model
 from app.config import settings
 from app.providers.base import LLMProvider
 from app.services.context_compression import (
@@ -71,8 +72,9 @@ class SemanticExtractor:
         max_chars: int | None = None,
     ) -> None:
         self._provider = provider
+        # 目标提取属于子 Agent 任务, 固定走 fast 档模型, 未配置时回退默认 LLM
         self.model_name = (
-            settings.agent_standard_model if model_name is None else model_name
+            select_fast_model().model if model_name is None else model_name
         )
         self.enabled = (
             settings.agent_extraction_enabled if enabled is None else enabled

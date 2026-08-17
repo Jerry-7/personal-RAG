@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from app.agent.context import AgentRunContext
 from app.agent.loop import AgentLoop
-from app.agent.model_selection import select_agent_model
+from app.agent.model_selection import select_agent_model, select_fast_model
 from app.agent.routing import ComplexityRouter, build_default_agent_registry
 from app.agent.tools import ToolRegistry
 
@@ -116,6 +116,38 @@ class AgentRegistryTests(unittest.TestCase):
         self.assertEqual(standard.model, "default-model")
         self.assertTrue(standard.uses_default)
         self.assertEqual(synthesizer.model, "large-model")
+
+    def test_select_fast_model_uses_configured_fast_model(self):
+        config = SimpleNamespace(
+            llm_provider="ollama",
+            ollama_llm_model="default-model",
+            openai_llm_model="openai-default",
+            anthropic_llm_model="anthropic-default",
+            agent_fast_model="fast-model",
+            agent_standard_model=None,
+            agent_expert_model=None,
+        )
+
+        fast = select_fast_model(config=config)
+
+        self.assertEqual((fast.model, fast.model_key), ("fast-model", "fast"))
+        self.assertFalse(fast.uses_default)
+
+    def test_select_fast_model_falls_back_to_default_llm(self):
+        config = SimpleNamespace(
+            llm_provider="ollama",
+            ollama_llm_model="default-model",
+            openai_llm_model="openai-default",
+            anthropic_llm_model="anthropic-default",
+            agent_fast_model=None,
+            agent_standard_model=None,
+            agent_expert_model=None,
+        )
+
+        fast = select_fast_model(config=config)
+
+        self.assertEqual(fast.model, "default-model")
+        self.assertTrue(fast.uses_default)
 
 
 class AgentToolPolicyTests(unittest.IsolatedAsyncioTestCase):

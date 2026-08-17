@@ -53,3 +53,18 @@ def select_agent_model(
         model_key=model_key,
         uses_default=not bool(configured),
     )
+
+
+def select_fast_model(config: Any = settings) -> AgentModelSelection:
+    """固定 fast 档模型，供子 Agent 任务统一使用。
+
+    压缩、目标语义提取、路由分类等"难度不高但费 token、吃上下文"的活
+    全部走轻量档模型，与主 Agent 的推理模型解耦。未配置 `agent_fast_model`
+    时回退到默认 LLM 模型（此时各档同模型，行为与以前一致）。
+    """
+    from app.agent.routing import build_default_agent_registry
+
+    return select_agent_model(
+        build_default_agent_registry().require("fast_general"),
+        config=config,
+    )

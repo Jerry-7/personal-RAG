@@ -9,6 +9,7 @@
 - search_knowledge_base: 在已上传文档中搜索
 - list_documents: 列出所有已索引文档
 - read_chunk: 读取指定分块的完整文本
+- extract_facts: 对 chunk/网页来源做目标事实提取（fast 档代读，省 token）
 
 引用追踪：
     每次 search_knowledge_base 调用时，所有检索到的 chunk 会被
@@ -133,6 +134,60 @@ async def _list_documents(*, context: AgentRunContext) -> str:
     return "\n".join(lines)
 
 
+async def _resolve_source_text(
+    source_ref: str,
+    context: AgentRunContext,
+) -> str | None:
+    """把来源引用解析为全文: chunk_id 或已抓取的网页 URL。"""
+    from app.db.models import Chunk, WebSnapshot
+
+    if source_ref.startswith(("http://", "https://")):
+        snapshot = (
+            context.db.query(WebSnapshot)
+            .filter(WebSnapshot.canonical_url == source_ref)
+            .order_by(WebSnapshot.fetched_at.desc())
+            .first()
+        )
+        if snapshot is not None:
+            return snapshot.content
+        return None
+    chunk = context.db.query(Chunk).filter(Chunk.id == source_ref).first()
+    if chunk is not None:
+        return chunk.text
+    return None
+
+
+async def _extract_facts(
+    source_ref: str,
+    objective: str,
+    *,
+    context: AgentRunContext,
+) -> str:
+    """
+    对长来源做目标事实提取，只返回与 objective 相关的事实。
+
+    来源必须传引用（chunk_id 或已抓取的网页 URL），而非大段原文：
+    长文本由 fast 档提取 Agent 代读，不进入主 Agent 上下文（省 token）。
+    """
+    text = await _resolve_source_text(source_ref, context)
+    if text is None:
+        return (
+            f"无法从 {source_ref} 解析到文本。chunk_id 需来自 "
+            "search_knowledge_base 的结果；网页 URL 需先用 fetch_web_page 抓取。"
+        )
+    if not objective.strip():
+        return "objective 不能为空: 请说明想从该来源中寻找哪些事实。"
+
+    from app.services.semantic_extractor import semantic_extractor
+
+    result = await semantic_extractor.extract(
+        text,
+        objective=objective,
+        purpose="fact extraction",
+    )
+    return result.content
+
+
 async def _read_chunk(chunk_id: str, *, context: AgentRunContext) -> str:
     """
     读取指定分块的完整文本内容。
@@ -224,7 +279,30 @@ def register_builtin_tools() -> None:
         source="builtin",
     )
 
-    logger.info("Built-in agent tools registered: %d tools", 3)
+    tool_registry.register(
+        name="extract_facts",
+        description="对长来源做目标事实提取: 只返回与 objective 相关的事实, "
+                    "不把全文拖进主上下文。source_ref 传 search_knowledge_base "
+                    "结果中的 chunk_id(UUID) 或已抓取的网页 URL。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "source_ref": {
+                    "type": "string",
+                    "description": "分块 UUID 或已抓取的网页 URL",
+                },
+                "objective": {
+                    "type": "string",
+                    "description": "想从该来源中提取的事实/要点",
+                },
+            },
+            "required": ["source_ref", "objective"],
+        },
+        handler=_extract_facts,
+        source="builtin",
+    )
+
+    logger.info("Built-in agent tools registered: %d tools", 4)
 
 
 # 模块导入时自动注册

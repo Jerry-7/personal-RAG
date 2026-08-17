@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from app.agent.context import AgentRunContext
+from app.config import settings
 from app.providers.base import LLMResponse
 from app.services.context_compression import CompressionStats
 from app.services.semantic_extractor import (
@@ -123,6 +124,18 @@ class SemanticExtractorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.decision, "keyword_fallback")
         self.assertLessEqual(len(result.content), 50)
         self.assertTrue(result.content.endswith("。"))
+
+    async def test_default_model_pins_fast_tier(self):
+        with patch.object(settings, "agent_fast_model", "fast-extract-model"):
+            extractor = SemanticExtractor(provider=_RaisingProvider())  # type: ignore[arg-type]
+        self.assertEqual(extractor.model_name, "fast-extract-model")
+
+    async def test_default_model_falls_back_to_llm_default_when_fast_unset(self):
+        with patch.object(settings, "agent_fast_model", None), patch.object(
+            settings, "ollama_llm_model", "default-llm"
+        ):
+            extractor = SemanticExtractor(provider=_RaisingProvider())  # type: ignore[arg-type]
+        self.assertEqual(extractor.model_name, "default-llm")
 
     async def test_web_evidence_extraction_caches_per_page_url(self):
         service = WebResearchService()

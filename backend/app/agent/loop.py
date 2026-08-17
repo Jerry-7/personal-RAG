@@ -24,6 +24,7 @@ from typing import Any, Optional
 
 from app.agent.context import AgentRunContext
 from app.agent.input_processor import AgentInputProcessor
+from app.agent.model_selection import select_fast_model
 from app.agent.tools import tool_registry
 from app.config import settings
 from app.db.models import ToolExecution
@@ -134,9 +135,10 @@ class AgentLoop:
         self.tools = tools or tool_registry
         self.input_processor = input_processor or AgentInputProcessor()
         self.model_name = model_name
+        # 主推理走 self.model_name(standard/expert), 上下文压缩固定走 fast 档
         self.context_compressor = context_compressor or ContextCompressor(
             provider,
-            model_name=model_name,
+            model_name=select_fast_model().model,
         )
 
     async def run(

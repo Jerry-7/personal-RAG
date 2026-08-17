@@ -95,6 +95,13 @@
 - `compress_messages` 新增 `min_compress_tokens` 门控，`AgentLoop` 每次迭代传 `agent_run_compress_threshold`（默认 20000）：低于阈值放行不压缩，避免对大上下文反复 map-reduce（省 token）
 - 新增测试：`test_adaptive_routing` 配对标签、`test_context_compression` 阈值门控（跳过/触发两态）
 
+### 9. 子 Agent 模型分层: fast 档统一 (当前工作区)
+- 主 Agent 推理走 `agent_standard_model` / `agent_expert_model`（高智能档）；子 Agent 任务——路由分类、上下文压缩、目标语义提取、会话摘要压缩——统一走 `agent_fast_model`（轻量档）
+- 新增 `model_selection.select_fast_model()`：按 `fast_general` profile 解析 fast 档模型，未配置时回退默认 LLM（各档同模型，行为与以前一致）
+- 固定点：`AgentLoop` 的压缩器、`SemanticExtractor` 默认模型、`chat_execution` 的路由分类器与 `update_summary`
+- 新增 `extract_facts` 内置工具：主 Agent 把长来源**引用**（chunk_id / 已抓取网页 URL）交给 fast 档提取 Agent 代读，只返回与 objective 相关的事实，不把全文拖进主上下文（省 token）
+- 新增测试：`select_fast_model` 两态、`SemanticExtractor` 默认 fast、`AgentLoop` 压缩器固定 fast、`test_extract_facts.py`（chunk/URL 解析 + 错误引导）
+
 ## 配置注意
 
 ### `.env` / DB Settings 优先级
@@ -124,6 +131,12 @@ Embedding: bge-m3  (Ollama @ 10.10.0.3:11434)
 默认 `20000`。Agent 循环每次迭代前对消息做压缩，但**只有上下文超过该阈值才触发 map-reduce**（低于 `agent_context_max_tokens=12000` 短路零调用，12000–20000 之间放行不压）。目的：避免对"已压缩过的上下文 + 新工具结果"反复整段通读压缩——压缩每次要读全文一遍（≈R token），单次迭代反而倒贴，只在防溢出/结果复用时才省。  
 **硬约束**：该值必须小于 `模型窗口 − system prompt − tools schema − 输出(4096)`。qwen 32k 窗口下 20000 安全；小窗口模型（8k/16k）请调低，否则放行后主调用会溢出。
 
+### 模型分层 (`agent_fast_model` / `agent_standard_model` / `agent_expert_model`)
+三个值默认都为空 → 全部回退到默认 LLM 模型（分层不生效，行为同以前）。想分层只需设 `AGENT_FAST_MODEL`：
+- `AGENT_FAST_MODEL`：子 Agent 任务 —— 路由分类、上下文压缩、目标语义提取、会话摘要压缩、`extract_facts`（难度不高但吃上下文、费 token 的活）
+- `AGENT_STANDARD_MODEL` / `AGENT_EXPERT_MODEL`：主 Agent 推理 —— `standard_research` / `expert_supervisor` 及其 worker
+本地 Ollama 可让 fast 档指向更小模型（如 `qwen3:4b`）省 token，主推理仍用大模型。
+
 ## 关键文件
 
 | 文件 | 作用 |
@@ -131,6 +144,7 @@ Embedding: bge-m3  (Ollama @ 10.10.0.3:11434)
 | `backend/app/agent/loop.py` | ReAct Agent 主循环 + System Prompt |
 | `backend/app/agent/routing.py` | 三级复杂度路由 + Agent Profile 注册表 |
 | `backend/app/agent/adaptive_routing.py` | Agent 主导路由（模型优先分类 + 启发式快通道/兜底） |
+| `backend/app/agent/model_selection.py` | Profile→模型映射 + `select_fast_model()` fast 档解析 |
 | `backend/app/agent/planning.py` | Supervisor 目标规划与受限回退 |
 | `backend/app/agent/supervisor.py` | 并行 worker、重试和结果汇总 |
 | `backend/app/services/chat_execution.py` | Agent 执行编排（`agent_event_generator` + `ChatRunManager`） |
@@ -139,7 +153,7 @@ Embedding: bge-m3  (Ollama @ 10.10.0.3:11434)
 | `backend/app/services/context_compression.py` | 无硬截断的分层上下文压缩 |
 | `backend/app/services/semantic_extractor.py` | 目标语义提取 (提取 Agent → 压缩收敛 → 整段兜底) |
 | `backend/app/services/text_utils.py` | `clip_to_sentence` 整句截断工具 |
-| `backend/app/agent/builtin_tools.py` | 3 个内置工具 (search/list_docs/read_chunk) |
+| `backend/app/agent/builtin_tools.py` | 4 个内置工具 (search/list_docs/read_chunk/extract_facts) |
 | `backend/app/services/event_bus.py` | 内存 pub/sub (asyncio.Queue per doc_id) |
 | `backend/app/services/task_manager.py` | Semaphore(10) 并发控制 |
 | `backend/app/services/indexing_worker.py` | 后台索引胶水层 |

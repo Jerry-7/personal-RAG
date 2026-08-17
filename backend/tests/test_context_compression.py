@@ -360,6 +360,15 @@ class ContextCompressionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(await registry.execute("large_tool", {}), result)
 
+    async def test_agent_loop_compressor_pins_fast_model(self):
+        with patch.object(settings, "agent_fast_model", "fast-compress-model"):
+            loop = AgentLoop(
+                provider=object(),  # type: ignore[arg-type]
+                max_iterations=1,
+                tools=ToolRegistry(),
+            )
+        self.assertEqual(loop.context_compressor.model_name, "fast-compress-model")
+
 
 if __name__ == "__main__":
     unittest.main()
