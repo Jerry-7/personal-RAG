@@ -1,3 +1,11 @@
+"""Personal RAG - Agent 主导路由测试
+
+覆盖 AdaptiveComplexityRouter 的三种路由模式:
+- model (默认): 模型优先分类, 启发式仅作快通道与失败兜底
+- adaptive: 旧混合行为, 启发式为主、低置信度才调模型
+- heuristic: 纯启发式, 零模型调用
+"""
+
 import json
 import unittest
 
@@ -24,24 +32,9 @@ class ClassifierProvider:
 
 
 class AdaptiveComplexityRouterTests(unittest.IsolatedAsyncioTestCase):
-    async def test_clear_cross_source_request_stays_on_heuristic_path(self):
-        provider = ClassifierProvider()
-        router = AdaptiveComplexityRouter(
-            RoutingPolicy(),
-            provider,  # type: ignore[arg-type]
-            classifier_model="fast-model",
-        )
+    # ── model 模式 (默认): Agent 主导 ──────────────────────────
 
-        decision = await router.route(
-            "请比较多个来源，分析差异并生成带引用的研究报告"
-        )
-
-        self.assertEqual(decision.tier, "expert")
-        self.assertEqual(decision.decision_source, "heuristic")
-        self.assertGreaterEqual(decision.confidence, 0.9)
-        self.assertEqual(provider.calls, [])
-
-    async def test_ambiguous_boundary_request_uses_model_score(self):
+    async def test_model_mode_runs_classifier_as_primary(self):
         provider = ClassifierProvider({
             "complexity_score": 5,
             "confidence": 0.86,
@@ -51,6 +44,7 @@ class AdaptiveComplexityRouterTests(unittest.IsolatedAsyncioTestCase):
             RoutingPolicy(),
             provider,  # type: ignore[arg-type]
             classifier_model="fast-model",
+            routing_mode="model",
         )
 
         decision = await router.route("请分析这个方案")
@@ -63,7 +57,24 @@ class AdaptiveComplexityRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("classifier_assessed", decision.reasons)
         self.assertEqual(len(provider.calls), 1)
 
-    async def test_web_mode_cannot_be_downgraded_below_standard(self):
+    async def test_model_mode_fast_path_skips_model_for_trivial_request(self):
+        provider = ClassifierProvider()
+        router = AdaptiveComplexityRouter(
+            RoutingPolicy(),
+            provider,  # type: ignore[arg-type]
+            classifier_model="fast-model",
+            routing_mode="model",
+        )
+
+        decision = await router.route("多少")
+
+        self.assertEqual(decision.tier, "fast")
+        self.assertEqual(decision.decision_source, "heuristic")
+        self.assertIn("fast_path", decision.reasons)
+        self.assertEqual(provider.calls, [])
+
+    async def test_model_mode_fast_path_respects_char_limit(self):
+        # 超过 fast_path_max_chars 上限的请求即使启发式高置信也必须走模型
         provider = ClassifierProvider({
             "complexity_score": 0,
             "confidence": 0.9,
@@ -73,6 +84,43 @@ class AdaptiveComplexityRouterTests(unittest.IsolatedAsyncioTestCase):
             RoutingPolicy(),
             provider,  # type: ignore[arg-type]
             classifier_model="fast-model",
+            routing_mode="model",
+            fast_path_max_chars=5,
+        )
+
+        decision = await router.route("帮我总结一下这个文档")
+
+        self.assertEqual(decision.decision_source, "model")
+        self.assertEqual(decision.tier, "fast")
+        self.assertEqual(len(provider.calls), 1)
+
+    async def test_model_mode_invalid_response_falls_back_to_heuristic(self):
+        provider = ClassifierProvider(invalid=True)
+        router = AdaptiveComplexityRouter(
+            RoutingPolicy(),
+            provider,  # type: ignore[arg-type]
+            classifier_model="fast-model",
+            routing_mode="model",
+        )
+
+        decision = await router.route("请分析这个方案")
+
+        self.assertEqual(decision.tier, "standard")
+        self.assertEqual(decision.decision_source, "heuristic_fallback")
+        self.assertIn("classifier_fallback", decision.reasons)
+        self.assertEqual(len(provider.calls), 1)
+
+    async def test_model_mode_web_cannot_be_downgraded_below_standard(self):
+        provider = ClassifierProvider({
+            "complexity_score": 0,
+            "confidence": 0.9,
+            "reasons": ["simple_lookup"],
+        })
+        router = AdaptiveComplexityRouter(
+            RoutingPolicy(),
+            provider,  # type: ignore[arg-type]
+            classifier_model="fast-model",
+            routing_mode="model",
         )
 
         decision = await router.route("请分析这个方案", mode="web")
@@ -87,6 +135,7 @@ class AdaptiveComplexityRouterTests(unittest.IsolatedAsyncioTestCase):
             RoutingPolicy(),
             provider,  # type: ignore[arg-type]
             classifier_model="fast-model",
+            routing_mode="model",
         )
 
         decision = await router.route(
@@ -99,20 +148,85 @@ class AdaptiveComplexityRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(decision.confidence, 1.0)
         self.assertEqual(provider.calls, [])
 
-    async def test_invalid_classifier_response_falls_back_to_heuristic(self):
-        provider = ClassifierProvider(invalid=True)
+    async def test_disabled_classifier_never_calls_model(self):
+        provider = ClassifierProvider()
         router = AdaptiveComplexityRouter(
             RoutingPolicy(),
             provider,  # type: ignore[arg-type]
             classifier_model="fast-model",
+            enabled=False,
+        )
+
+        decision = await router.route("请分析这个方案")
+
+        self.assertEqual(decision.decision_source, "heuristic")
+        self.assertEqual(provider.calls, [])
+
+    # ── adaptive 模式: 保留旧混合行为 ──────────────────────────
+
+    async def test_adaptive_mode_clear_request_stays_on_heuristic(self):
+        provider = ClassifierProvider()
+        router = AdaptiveComplexityRouter(
+            RoutingPolicy(),
+            provider,  # type: ignore[arg-type]
+            classifier_model="fast-model",
+            routing_mode="adaptive",
+        )
+
+        decision = await router.route(
+            "请比较多个来源，分析差异并生成带引用的研究报告"
+        )
+
+        self.assertEqual(decision.tier, "expert")
+        self.assertEqual(decision.decision_source, "heuristic")
+        self.assertGreaterEqual(decision.confidence, 0.9)
+        self.assertEqual(provider.calls, [])
+
+    async def test_adaptive_mode_boundary_request_uses_model(self):
+        provider = ClassifierProvider({
+            "complexity_score": 5,
+            "confidence": 0.86,
+            "reasons": ["specialist_reasoning", "multiple_sources"],
+        })
+        router = AdaptiveComplexityRouter(
+            RoutingPolicy(),
+            provider,  # type: ignore[arg-type]
+            classifier_model="fast-model",
+            routing_mode="adaptive",
+        )
+
+        decision = await router.route("请分析这个方案")
+
+        self.assertEqual(decision.decision_source, "model")
+        self.assertEqual(decision.tier, "expert")
+        self.assertEqual(len(provider.calls), 1)
+
+    # ── heuristic 模式: 不调模型 ───────────────────────────────
+
+    async def test_heuristic_mode_never_calls_model(self):
+        provider = ClassifierProvider()
+        router = AdaptiveComplexityRouter(
+            RoutingPolicy(),
+            provider,  # type: ignore[arg-type]
+            classifier_model="fast-model",
+            routing_mode="heuristic",
         )
 
         decision = await router.route("请分析这个方案")
 
         self.assertEqual(decision.tier, "standard")
-        self.assertEqual(decision.decision_source, "heuristic_fallback")
-        self.assertIn("classifier_fallback", decision.reasons)
-        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(decision.decision_source, "heuristic")
+        self.assertEqual(provider.calls, [])
+
+    async def test_invalid_routing_mode_raises(self):
+        provider = ClassifierProvider()
+        with self.assertRaises(ValueError):
+            AdaptiveComplexityRouter(
+                RoutingPolicy(),
+                provider,  # type: ignore[arg-type]
+                classifier_model="fast-model",
+                routing_mode="bogus",
+            )
 
 
 if __name__ == "__main__":

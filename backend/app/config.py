@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     agent_routing_classifier_enabled: bool = True
     agent_routing_classifier_confidence_threshold: float = 0.7
     agent_routing_classifier_max_input_tokens: int = 2000
+    # 路由决策模式: model=Agent 主导(默认,模型优先,启发式兜底);
+    # adaptive=保留旧混合行为(启发式主,低置信度才调模型); heuristic=纯启发式,不调模型
+    agent_routing_mode: str = "model"
+    agent_routing_fast_path_enabled: bool = True
+    agent_routing_fast_path_max_chars: int = 20
+    agent_routing_fast_path_confidence: float = 0.85
     agent_fast_model: Optional[str] = None
     agent_standard_model: Optional[str] = None
     agent_expert_model: Optional[str] = None

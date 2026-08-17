@@ -1,6 +1,6 @@
 # Personal RAG — 对话交接文档
 
-> 最后更新: 2026-08-15
+> 最后更新: 2026-08-17
 > 当前分支: `feature/agent`
 
 ## 项目概览
@@ -18,7 +18,7 @@
 ## 当前 Agent 架构
 
 - **三级路由**：`fast / standard / expert`，支持手动指定和自动复杂度评分。
-- **自适应复核**：确定性规则低置信时，由 fast 模型结构化复核；失败时回退规则结果。
+- **Agent 主导路由**：每条 `auto` 请求先由 fast 模型语义分类（复杂度评分 + 置信度 + 语义原因码），硬编码关键词打分器仅作**快通道**（极短/高置信 fast 请求跳过模型）与**失败兜底**。`agent_routing_mode` 可切回旧混合（`adaptive`）或纯启发式（`heuristic`）。
 - **多 Agent 编排**：expert 路由进入 Supervisor，模型规划本地检索、网页研究等并行 worker，最后由 synthesizer 汇总。
 - **持久化目标树**：每个 root、primary Agent、worker 和 synthesizer 都记录 GoalNode、状态、重试、依赖、模型与工具预算。
 - **完整工具能力**：Agent 等级不再屏蔽工具；`local` 模式仍作为安全边界禁用网络工具。
@@ -66,6 +66,19 @@
 - **`.env` 模型配反**: `OLLAMA_LLM_MODEL` 和 `OLLAMA_EMBEDDING_MODEL` 值互换
 - **DB settings 表配反**: 同上，数据库存储优先级高于 `.env`
 
+### 5. 拆分聊天执行编排 (`02e3908`)
+- `backend/app/api/chat.py` 从 768 行压到 269 行，只保留 HTTP 请求解析与响应包装
+- 执行编排迁至新模块 `backend/app/services/chat_execution.py`（`agent_event_generator` + `ChatRunManager` 单例）
+- 取消/暂停/恢复状态统一由 `ChatRunManager` 管理，不再在 API 层维护裸 dict
+
+### 6. Agent 主导路由 (当前工作区)
+- 路由主导权从硬编码关键词打分（`ComplexityRouter`）交给路由 Agent
+- `adaptive_routing.py` 重构为 Agent-first：模型优先分类，启发式降级为快通道 + 失败兜底
+- 新增 `agent_routing_mode = model | adaptive | heuristic`（默认 `model`），`adaptive` 完整保留旧混合行为
+- 新增快通道开关 `agent_routing_fast_path_enabled` / `max_chars` / `confidence`（默认 20 字符、置信 ≥0.85）
+- `enabled=False` 或 `heuristic` 模式时零模型调用；web 模式硬约束（≥standard）与手动 tier 覆盖不变
+- 路由来源/评分/置信度/原因码 provenance 全保留，`decision_source` 取值不变（前端类型无需改动）
+
 ## 配置注意
 
 ### `.env` / DB Settings 优先级
@@ -83,15 +96,20 @@ Embedding: bge-m3  (Ollama @ 10.10.0.3:11434)
 `config.py:73` — `agent_enabled: bool = True`  
 `False` 时回退到经典 RAG 流水线（`generator.py`)
 
+### 路由模式 (`agent_routing_mode`)
+`model`（默认）：每条 `auto` 请求先经 fast 模型语义路由，启发式仅作快通道 + 失败兜底；每条请求多一次 fast 模型调用（本地 Ollama 约 0.5–3s），由快通道缓解。  
+想回滚旧行为：`.env` 设 `AGENT_ROUTING_MODE=adaptive`（旧混合）或 `heuristic`（纯启发式，零模型调用）。
+
 ## 关键文件
 
 | 文件 | 作用 |
 |------|------|
 | `backend/app/agent/loop.py` | ReAct Agent 主循环 + System Prompt |
 | `backend/app/agent/routing.py` | 三级复杂度路由 + Agent Profile 注册表 |
-| `backend/app/agent/adaptive_routing.py` | 低置信路由模型复核 |
+| `backend/app/agent/adaptive_routing.py` | Agent 主导路由（模型优先分类 + 启发式快通道/兜底） |
 | `backend/app/agent/planning.py` | Supervisor 目标规划与受限回退 |
 | `backend/app/agent/supervisor.py` | 并行 worker、重试和结果汇总 |
+| `backend/app/services/chat_execution.py` | Agent 执行编排（`agent_event_generator` + `ChatRunManager`） |
 | `backend/app/agent/tools.py` | ToolRegistry + `@skill` 装饰器 |
 | `backend/app/services/goal_runtime.py` | GoalNode 生命周期与有序运行事件 |
 | `backend/app/services/context_compression.py` | 无硬截断的分层上下文压缩 |
