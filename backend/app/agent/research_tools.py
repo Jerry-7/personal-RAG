@@ -2,6 +2,7 @@
 
 from app.agent.context import AgentRunContext
 from app.agent.tools import tool_registry
+from app.services.text_utils import clip_to_sentence
 from app.services.web_research import web_research_service
 from app.services.web_search import search_provider
 
@@ -30,7 +31,7 @@ async def _web_search(
     for index, result in enumerate(results, start=1):
         lines.append(
             f"[W{index}](<{result.url}>) 候选链接（非正式引用）: {result.title}\n"
-            f"搜索摘要（非证据）: {result.snippet[:500]}"
+            f"搜索摘要（非证据）: {clip_to_sentence(result.snippet, 500)}"
         )
     return "\n\n".join(lines)
 

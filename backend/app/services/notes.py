@@ -23,6 +23,7 @@ from app.db.models import (
 from app.db.vector_store import vector_store
 from app.services.chunker import chunker
 from app.services.embedder import embedding_service
+from app.services.text_utils import clip_to_sentence
 
 
 class NoteService:
@@ -80,7 +81,7 @@ class NoteService:
         last_assistant = next((m for m in reversed(messages) if m.role == "assistant"), None)
         title = last_user.content.strip().replace("\n", " ")[:80] or "对话笔记"
         summary_source = last_assistant.content if last_assistant else last_user.content
-        summary = summary_source.strip()[:300]
+        summary = clip_to_sentence(summary_source, 300)
         body_parts = [f"# {title}", "", summary]
         display_messages = messages
         rolling_summary = db.query(ConversationSummary).filter_by(conversation_id=conversation_id).first()
@@ -124,7 +125,7 @@ class NoteService:
                     chunk_id=citation.get("chunk_id") or None,
                     snapshot_id=citation.get("snapshot_id") or None,
                     citation_index=citation.get("index"),
-                    excerpt=citation.get("snippet", "")[:1000],
+                    excerpt=clip_to_sentence(citation.get("snippet", ""), 1000),
                     content=chunk.text if chunk else citation.get("snippet", ""),
                     metadata_json=json.dumps(citation, ensure_ascii=False),
                 ))

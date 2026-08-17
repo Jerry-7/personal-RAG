@@ -85,9 +85,10 @@
 - 新模块 `services/semantic_extractor.py`：目标提取 Agent → 仍超预算则压缩 Agent 收敛 → 失败时整段关键词兜底（绝不砍半段）
   - 短内容短路：预算内零模型调用（`estimate_tokens ≤ max(128, budget)` 直接返回）
   - 同一 URL 的提取结果缓存在 `AgentRunContext.page_evidence`，`fetch_web_page` / `crawl_website` / 引用 snippet 复用，每页只提取一次
-- 新工具函数 `services/text_utils.py::clip_to_sentence`：展示片段（引用 snippet、sources 上下文、`web_search` 摘要）统一整句截断，不再 `[:N]` 半句切断
+- 新工具函数 `services/text_utils.py::clip_to_sentence`：展示片段统一整句截断，不再 `[:N]` 半句切断 —— 引用 snippet（generator/builtin_tools）、sources 上下文（api/sources.py）、`web_search` 摘要、`notes.py` 摘要与来源 excerpt
+- 保留的 `[:N]` 均为标签/标识符/DB 字段上限/安全边界（标题、tag 列表、文件 hash 前缀、robots.txt 解析上限），非展示正文
 - 新增配置 `agent_extraction_enabled=True` / `agent_extraction_max_chars=3500`；`enabled=False` 时退化为原样返回（不截断、不调用模型）
-- 新增测试 `tests/test_semantic_extractor.py`（14 项：短路/提取/压缩/兜底/缓存/整句截断）
+- 新增测试 `tests/test_semantic_extractor.py`（14 项：短路/提取/压缩/兜底/缓存/整句截断）+ `test_research_agent.py` 笔记摘要句边界测试
 
 ## 配置注意
 

@@ -119,6 +119,25 @@ class ResearchPersistenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.db.get(WebSnapshot, "snapshot").is_pinned)
         self.assertIsNone(self.db.get(WebSnapshot, "snapshot").expires_at)
 
+    def test_note_summary_clips_at_sentence_boundary(self):
+        conversation = Conversation(
+            id="conv2", title="T", model_provider="ollama", model_name="m",
+            embedding_provider="ollama", embedding_model="e",
+        )
+        user = Message(id="user2", conversation_id="conv2", role="user", content="问题")
+        assistant = Message(
+            id="assistant2", conversation_id="conv2", role="assistant",
+            content="第一句完整内容。" + "补充细节。" * 80,
+        )
+        self.db.add_all([conversation, user, assistant])
+        self.db.commit()
+
+        note = note_service.create_draft_from_conversation(self.db, "conv2")
+
+        self.assertLessEqual(len(note.summary), 300)
+        self.assertTrue(note.summary.endswith("。"))
+        self.assertIn("第一句完整内容", note.summary)
+
 
 class ToolVisibilityTests(unittest.IsolatedAsyncioTestCase):
     def test_web_tools_can_be_filtered_by_source(self):
