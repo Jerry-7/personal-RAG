@@ -254,6 +254,7 @@ class AgentLoop:
                 prepared = await self.context_compressor.compress_messages(
                     messages,
                     purpose="ReAct decision context",
+                    min_compress_tokens=settings.agent_run_compress_threshold,
                 )
                 messages = prepared.messages
                 if prepared.stats.compressed:

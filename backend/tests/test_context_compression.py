@@ -180,6 +180,50 @@ class ContextCompressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("CASE-9999", result.messages[-1]["content"])
         self.assertLessEqual(result.stats.compressed_tokens, 220)
 
+    async def test_message_compression_skips_below_in_run_threshold(self):
+        provider = IdentifierPreservingProvider()
+        compressor = ContextCompressor(
+            provider,  # type: ignore[arg-type]
+            chunk_tokens=96,
+            max_rounds=4,
+        )
+        messages = [
+            {"role": "system", "content": "Primary system rule"},
+            {"role": "user", "content": "history " * 120},
+        ]
+
+        result = await compressor.compress_messages(
+            messages,
+            target_tokens=150,
+            min_compress_tokens=400,
+        )
+
+        self.assertFalse(result.stats.compressed)
+        self.assertEqual(provider.calls, 0)
+        self.assertEqual(result.messages, messages)
+
+    async def test_message_compression_runs_above_in_run_threshold(self):
+        provider = IdentifierPreservingProvider()
+        compressor = ContextCompressor(
+            provider,  # type: ignore[arg-type]
+            chunk_tokens=96,
+            max_rounds=4,
+        )
+        messages = [
+            {"role": "system", "content": "Primary system rule"},
+            {"role": "user", "content": "history " * 400},
+        ]
+
+        result = await compressor.compress_messages(
+            messages,
+            target_tokens=200,
+            min_compress_tokens=150,
+        )
+
+        self.assertTrue(result.stats.compressed)
+        self.assertGreater(provider.calls, 0)
+        self.assertLessEqual(result.stats.compressed_tokens, 200)
+
     async def test_agent_loop_compresses_full_history_before_model_call(self):
         provider = AgentCompressionProvider()
         registry = ToolRegistry()
@@ -213,7 +257,9 @@ class ContextCompressionTests(unittest.IsolatedAsyncioTestCase):
             for index in range(12)
         ]
 
-        with patch.object(settings, "agent_context_max_tokens", 2200):
+        with patch.object(settings, "agent_context_max_tokens", 2200), patch.object(
+            settings, "agent_run_compress_threshold", 1000
+        ):
             events = [
                 event
                 async for event in loop.run(

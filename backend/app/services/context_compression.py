@@ -68,6 +68,7 @@ def estimate_tokens(text: str) -> int:
     """Conservatively estimate mixed CJK and Latin token usage without a tokenizer."""
     if not text:
         return 0
+    # 中日韩文字:token = 1:1 英文字符:token = 1:4
     cjk_count = len(re.findall(r"[\u3400-\u9fff\uf900-\ufaff]", text))
     other_count = len(text) - cjk_count
     return cjk_count + math.ceil(other_count / 4)
@@ -174,7 +175,9 @@ class ContextCompressor:
         anchor_retries = 0
         for round_number in range(1, self.max_rounds + 1):
             current_tokens = estimate_tokens(current)
+            # 将text分块 根据每个chunk_tokens限制
             chunks = split_text_losslessly(current, self.chunk_tokens)
+            # 计算每个块的压缩目标token数
             per_chunk_target = max(
                 128,
                 min(self.chunk_tokens // 2, math.ceil(target_tokens / len(chunks))),
@@ -293,12 +296,19 @@ class ContextCompressor:
         messages: list[dict[str, Any]],
         *,
         target_tokens: int | None = None,
+        min_compress_tokens: int | None = None,
         purpose: str = "Agent working context",
     ) -> CompressedMessages:
         budget = target_tokens or settings.agent_context_max_tokens
         normalized = normalize_system_messages(messages)
         original_tokens = self._message_tokens(normalized)
         if original_tokens <= budget:
+            return CompressedMessages(
+                normalized,
+                CompressionStats(original_tokens, original_tokens),
+            )
+        # run 内未达触发阈值则放行, 避免反复 map-reduce 已压过的上下文
+        if min_compress_tokens is not None and original_tokens <= min_compress_tokens:
             return CompressedMessages(
                 normalized,
                 CompressionStats(original_tokens, original_tokens),

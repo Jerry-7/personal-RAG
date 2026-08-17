@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     # ── Agent 配置 ────────────────────────────────────────────
     agent_max_iterations: int = 5
     agent_context_max_tokens: int = 12000
+    # run 内消息压缩触发阈值: 上下文低于此不压缩(省 token), 高于此才 map-reduce
+    agent_run_compress_threshold: int = 20000
     agent_compression_chunk_tokens: int = 3000
     agent_compression_max_rounds: int = 4
     agent_memory_summary_max_tokens: int = 3500

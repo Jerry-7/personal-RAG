@@ -90,6 +90,11 @@
 - 新增配置 `agent_extraction_enabled=True` / `agent_extraction_max_chars=3500`；`enabled=False` 时退化为原样返回（不截断、不调用模型）
 - 新增测试 `tests/test_semantic_extractor.py`（14 项：短路/提取/压缩/兜底/缓存/整句截断）+ `test_research_agent.py` 笔记摘要句边界测试
 
+### 8. 消息序列化统一 + run 内压缩阈值 (当前工作区)
+- 三处历史序列化统一为 `<message index=N role="user">...</message>` 配对标签（`adaptive_routing` / `conversation_memory` / `context_compression`），修复 `<user>...</message>` 不对称缺陷
+- `compress_messages` 新增 `min_compress_tokens` 门控，`AgentLoop` 每次迭代传 `agent_run_compress_threshold`（默认 20000）：低于阈值放行不压缩，避免对大上下文反复 map-reduce（省 token）
+- 新增测试：`test_adaptive_routing` 配对标签、`test_context_compression` 阈值门控（跳过/触发两态）
+
 ## 配置注意
 
 ### `.env` / DB Settings 优先级
@@ -114,6 +119,10 @@ Embedding: bge-m3  (Ollama @ 10.10.0.3:11434)
 ### 目标语义提取 (`agent_extraction_enabled`)
 `True`（默认）：网页正文按研究目标做 Agent 语义提取，超预算时压缩收敛，证据与引用 snippet 均不硬截断。  
 每页大正文多一次模型调用（超过 3500 字才触发，短页短路）；想完全关掉：`.env` 设 `AGENT_EXTRACTION_ENABLED=False`（正文原样入库，展示片段仍整句截断）。
+
+### run 内压缩触发阈值 (`agent_run_compress_threshold`)
+默认 `20000`。Agent 循环每次迭代前对消息做压缩，但**只有上下文超过该阈值才触发 map-reduce**（低于 `agent_context_max_tokens=12000` 短路零调用，12000–20000 之间放行不压）。目的：避免对"已压缩过的上下文 + 新工具结果"反复整段通读压缩——压缩每次要读全文一遍（≈R token），单次迭代反而倒贴，只在防溢出/结果复用时才省。  
+**硬约束**：该值必须小于 `模型窗口 − system prompt − tools schema − 输出(4096)`。qwen 32k 窗口下 20000 安全；小窗口模型（8k/16k）请调低，否则放行后主调用会溢出。
 
 ## 关键文件
 
