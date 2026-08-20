@@ -1,6 +1,6 @@
 # Personal RAG — 对话交接文档
 
-> 最后更新: 2026-08-17
+> 最后更新: 2026-08-18
 > 当前分支: `feature/agent`
 
 ## 项目概览
@@ -25,6 +25,7 @@
 - **Prompt 软频控**：各 Profile 配置总工具调用建议和单工具重复建议，只观测超建议行为，不做等级硬拒绝。
 - **上下文压缩**：长上下文由压缩 Agent 分层处理，保护 URL、引用号和业务标识；压缩失败显式终止，不做文本硬截断。
 - **目标语义提取**：网页证据按研究目标由提取 Agent 语义抽取 + 压缩，替代字符边界硬切；本地展示片段改为整句截断（`clip_to_sentence`），任何文本不再从半句/单词中间切断。
+- **模型分层 + 子 Agent 委派**：主 Agent 推理走 `agent_standard/expert_model`；路由分类、上下文压缩、目标语义提取、会话摘要压缩统一走 `agent_fast_model`（`select_fast_model`，未配置时回退默认 LLM）。主 Agent 按 system prompt 的委派策略，用 `extract_facts` 把长来源（chunk/网页）代读交给 fast 档子 Agent，只取相关事实、不把全文拖进主上下文。
 - **运行可视化**：前端展示路由来源与置信度、目标树、并行分支、工具调用、重试、压缩指标、工具频控和历史运行分析。
 
 ## 关键路由策略
@@ -72,7 +73,7 @@
 - 执行编排迁至新模块 `backend/app/services/chat_execution.py`（`agent_event_generator` + `ChatRunManager` 单例）
 - 取消/暂停/恢复状态统一由 `ChatRunManager` 管理，不再在 API 层维护裸 dict
 
-### 6. Agent 主导路由 (当前工作区)
+### 6. Agent 主导路由 (`dd2f57c` `1e8b6f4`)
 - 路由主导权从硬编码关键词打分（`ComplexityRouter`）交给路由 Agent
 - `adaptive_routing.py` 重构为 Agent-first：模型优先分类，启发式降级为快通道 + 失败兜底
 - 新增 `agent_routing_mode = model | adaptive | heuristic`（默认 `model`），`adaptive` 完整保留旧混合行为
@@ -80,7 +81,7 @@
 - `enabled=False` 或 `heuristic` 模式时零模型调用；web 模式硬约束（≥standard）与手动 tier 覆盖不变
 - 路由来源/评分/置信度/原因码 provenance 全保留，`decision_source` 取值不变（前端类型无需改动）
 
-### 7. 硬截断替换为 Agent 语义提取 (当前工作区)
+### 7. 硬截断替换为 Agent 语义提取 (`8dbc54b` `2baa7c1`)
 - 核心改动：`web_research.py` 的 `_excerpt`（关键词打分 + 字符硬切，会从段落中间切断）被移除，改为 `SemanticExtractor` 目标语义提取
 - 新模块 `services/semantic_extractor.py`：目标提取 Agent → 仍超预算则压缩 Agent 收敛 → 失败时整段关键词兜底（绝不砍半段）
   - 短内容短路：预算内零模型调用（`estimate_tokens ≤ max(128, budget)` 直接返回）
@@ -90,12 +91,12 @@
 - 新增配置 `agent_extraction_enabled=True` / `agent_extraction_max_chars=3500`；`enabled=False` 时退化为原样返回（不截断、不调用模型）
 - 新增测试 `tests/test_semantic_extractor.py`（14 项：短路/提取/压缩/兜底/缓存/整句截断）+ `test_research_agent.py` 笔记摘要句边界测试
 
-### 8. 消息序列化统一 + run 内压缩阈值 (当前工作区)
+### 8. 消息序列化统一 + run 内压缩阈值 (`2830d71` `8df2b56`)
 - 三处历史序列化统一为 `<message index=N role="user">...</message>` 配对标签（`adaptive_routing` / `conversation_memory` / `context_compression`），修复 `<user>...</message>` 不对称缺陷
 - `compress_messages` 新增 `min_compress_tokens` 门控，`AgentLoop` 每次迭代传 `agent_run_compress_threshold`（默认 20000）：低于阈值放行不压缩，避免对大上下文反复 map-reduce（省 token）
 - 新增测试：`test_adaptive_routing` 配对标签、`test_context_compression` 阈值门控（跳过/触发两态）
 
-### 9. 子 Agent 模型分层: fast 档统一 (当前工作区)
+### 9. 子 Agent 模型分层: fast 档统一 (`467657e` `b180894`)
 - 主 Agent 推理走 `agent_standard_model` / `agent_expert_model`（高智能档）；子 Agent 任务——路由分类、上下文压缩、目标语义提取、会话摘要压缩——统一走 `agent_fast_model`（轻量档）
 - 新增 `model_selection.select_fast_model()`：按 `fast_general` profile 解析 fast 档模型，未配置时回退默认 LLM（各档同模型，行为与以前一致）
 - 固定点：`AgentLoop` 的压缩器、`SemanticExtractor` 默认模型、`chat_execution` 的路由分类器与 `update_summary`
@@ -176,7 +177,7 @@ FAISS 索引: `backend/data/faiss/rag_index.faiss` + `id_map.pkl`
 ```bash
 # 查看数据库
 sqlite3 backend/data/app.db
-.tables    # chunks, conversations, documents, messages, settings
+.tables    # 25 张表: RAG 核心(documents/chunks) + 对话(messages/conversations/notes) + Agent 运行时(agent_runs/goal_nodes/web_snapshots/routing_policy_versions 等) + settings
 .schema    # 查看表结构
 ```
 
@@ -191,7 +192,7 @@ cd backend && python run.py
 # 前端启动
 cd frontend && npm run dev
 
-# 后端完整单元测试
+# 后端完整单元测试（当前 136 个全绿）
 cd backend && .venv/Scripts/python -m unittest discover -s tests -v
 
 # 前端类型检查与生产构建
@@ -210,3 +211,4 @@ sqlite3 -header -column backend/data/app.db "SELECT id, original_name, status FR
 2. `_test_upload.py` 和 `_test_ocr.png` 是测试文件，未加入版本控制
 3. `indexer.py` 中 `duration_secs` 字段从未写入
 4. 删除文档后 FAISS 向量通过完全重建索引实现（效率低）
+5. `INTERVIEW_PREP.md`（面试准备文档：项目架构/细节设计/难点 STAR 与问答）未加入版本控制，待定是否入库

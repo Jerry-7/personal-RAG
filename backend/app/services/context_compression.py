@@ -210,6 +210,7 @@ class ContextCompressor:
                         anchor_retries=anchor_retries,
                     ),
                 )
+            # 收益递减停止条件： 省下来的Token数量”太少（低于动态阈值），就停止继续压缩
             minimum_progress = max(16, math.ceil(current_tokens * 0.03))
             if current_tokens - combined_tokens < minimum_progress:
                 raise ContextCompressionError(
